@@ -36,7 +36,12 @@ public class OrderService(FlowLineDbContext db) : IOrderService
 
     public Task<List<WorkItem>> GetWorkItemsAsync(CancellationToken cancellationToken = default)
     {
+        // AsNoTracking: this is a read-only display list, and (crucially) the circuit-scoped
+        // DbContext lives for the whole page — a tracked re-query would return stale values from
+        // the identity map, so the live-refresh (see Orders.razor) wouldn't reflect status/stage
+        // changes. AsNoTracking always materialises fresh rows from the database.
         return db.WorkItems
+            .AsNoTracking()
             .Include(wi => wi.Workflow)
             .Include(wi => wi.CurrentStage)
             .Include(wi => wi.ClaimedByStation)

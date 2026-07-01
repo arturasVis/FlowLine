@@ -1,8 +1,10 @@
 @page "/admin/orders"
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 @attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IOrderService OrderService
 @inject IWorkflowBuilderService Builder
+@inject IRelayNotifier Notifier
 
 <PageTitle>Orders — Admin</PageTitle>
 
@@ -105,12 +107,35 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Live-refresh: RelayService raises StageChanged on every claim, hand-off, and prebuild
+        // scan, so the list reflects units created/moved from station screens without a manual
+        // reload — same mechanism the station screens use (see IRelayNotifier).
+        Notifier.StageChanged += OnStageChanged;
+
         var allWorkflows = await Builder.GetWorkflowsAsync();
         // Only workflows that can actually accept an order — active and with at least one
         // stage to queue at — so picking one never hits OrderServiceException's "no stages" guard.
         _workflows = allWorkflows.Where(w => w.IsActive && w.Stages.Count > 0).ToList();
 
         await LoadWorkItemsAsync();
+    }
+
+    private void OnStageChanged(int stageId)
+    {
+        // The list spans all stages, so refresh on any change. InvokeAsync marshals back onto this
+        // component's circuit (the event fires from whichever circuit triggered the change).
+        _ = InvokeAsync(async () =>
+        {
+            await LoadWorkItemsAsync();
+            StateHasChanged();
+        });
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        // Unsubscribe or we leak this component on the singleton notifier, which outlives the circuit.
+        Notifier.StageChanged -= OnStageChanged;
+        return ValueTask.CompletedTask;
     }
 
     private async Task LoadWorkItemsAsync()
