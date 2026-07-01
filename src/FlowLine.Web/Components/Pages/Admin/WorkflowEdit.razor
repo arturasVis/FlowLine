@@ -1,0 +1,222 @@
+@page "/admin/workflows/{WorkflowId:int}"
+@rendermode InteractiveServer
+@inject IWorkflowBuilderService Builder
+
+<PageTitle>@(_workflow?.Name ?? "Workflow") — Admin</PageTitle>
+
+@if (_notFound)
+{
+    <p>Workflow @WorkflowId not found.</p>
+}
+else if (_workflow is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="admin-page">
+        <p><a href="/admin/workflows">&larr; All workflows</a></p>
+
+        <div class="workflow-header">
+            <input @bind="_workflow.Name" placeholder="Name" />
+            <input @bind="_workflow.Description" placeholder="Description" />
+            <button @onclick="SaveWorkflowAsync">Save</button>
+            <span class="status-badge">@(_workflow.IsActive ? "Active" : "Archived")</span>
+        </div>
+
+        @if (_error is not null)
+        {
+            <p class="error">@_error</p>
+        }
+
+        @foreach (var stage in _workflow.Stages.OrderBy(s => s.OrderIndex).ToList())
+        {
+            <section class="stage-card">
+                <header class="stage-card-header">
+                    <input @bind="stage.Name" />
+                    <button @onclick="() => SaveStageAsync(stage)">Save</button>
+                    <button @onclick="() => MoveStageAsync(stage, -1)" disabled="@(stage.OrderIndex == 0)">Move stage up</button>
+                    <button @onclick="() => MoveStageAsync(stage, 1)" disabled="@(stage.OrderIndex == _workflow.Stages.Count - 1)">Move stage down</button>
+                    <button @onclick="() => DeleteStageAsync(stage)">Delete stage</button>
+                </header>
+
+                @foreach (var step in stage.Steps.OrderBy(s => s.OrderIndex).ToList())
+                {
+                    <div class="step-card">
+                        <input @bind="step.Name" placeholder="Step name" />
+                        <textarea @bind="step.Instructions" placeholder="Instructions"></textarea>
+                        <div class="step-card-actions">
+                            <button @onclick="() => SaveStepAsync(step)">Save</button>
+                            <button @onclick="() => MoveStepAsync(stage, step, -1)" disabled="@(step.OrderIndex == 0)">Move step up</button>
+                            <button @onclick="() => MoveStepAsync(stage, step, 1)" disabled="@(step.OrderIndex == stage.Steps.Count - 1)">Move step down</button>
+                            <button @onclick="() => DeleteStepAsync(step)">Delete step</button>
+                        </div>
+
+                        <div class="media-list">
+                            @foreach (var media in step.MediaAssets.OrderBy(m => m.DisplayOrder))
+                            {
+                                <div class="media-thumb">
+                                    <img src="@($"/media/{media.FilePath}")" alt="" />
+                                    <button @onclick="() => DeleteMediaAsync(media)">Remove</button>
+                                </div>
+                            }
+                            <InputFile OnChange="@(e => UploadMediaAsync(step, e))" />
+                        </div>
+                    </div>
+                }
+
+                <div class="add-row">
+                    <input @bind="_newStepNames[stage.Id]" placeholder="New step name" />
+                    <button @onclick="() => AddStepAsync(stage)">Add step</button>
+                </div>
+            </section>
+        }
+
+        <div class="add-row">
+            <input @bind="_newStageName" placeholder="New stage name" />
+            <button @onclick="AddStageAsync">Add stage</button>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int WorkflowId { get; set; }
+
+    private Workflow? _workflow;
+    private bool _notFound;
+    private string? _error;
+    private string _newStageName = string.Empty;
+    private readonly Dictionary<int, string> _newStepNames = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _workflow = await Builder.GetWorkflowAsync(WorkflowId);
+        _notFound = _workflow is null;
+
+        if (_workflow is not null)
+        {
+            // @bind targets the dictionary indexer directly, so every stage needs an entry
+            // up front — an indexer getter on a missing key would throw.
+            foreach (var stage in _workflow.Stages)
+            {
+                _newStepNames.TryAdd(stage.Id, string.Empty);
+            }
+        }
+    }
+
+    private Task SaveWorkflowAsync() =>
+        RunAsync(() => Builder.UpdateWorkflowAsync(_workflow!.Id, _workflow.Name, _workflow.Description));
+
+    private Task SaveStageAsync(Stage stage) =>
+        RunAsync(() => Builder.UpdateStageAsync(stage.Id, stage.Name));
+
+    private Task SaveStepAsync(Step step) =>
+        RunAsync(() => Builder.UpdateStepAsync(step.Id, step.Name, step.Instructions));
+
+    private async Task AddStageAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newStageName))
+        {
+            return;
+        }
+
+        await RunAsync(() => Builder.AddStageAsync(_workflow!.Id, _newStageName.Trim()));
+        _newStageName = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task DeleteStageAsync(Stage stage)
+    {
+        await RunAsync(() => Builder.DeleteStageAsync(stage.Id));
+        await LoadAsync();
+    }
+
+    private async Task MoveStageAsync(Stage stage, int direction)
+    {
+        var ordered = _workflow!.Stages.OrderBy(s => s.OrderIndex).Select(s => s.Id).ToList();
+        var index = ordered.IndexOf(stage.Id);
+        var swapWith = index + direction;
+        if (swapWith < 0 || swapWith >= ordered.Count)
+        {
+            return;
+        }
+
+        (ordered[index], ordered[swapWith]) = (ordered[swapWith], ordered[index]);
+        await RunAsync(() => Builder.ReorderStagesAsync(_workflow.Id, ordered));
+        await LoadAsync();
+    }
+
+    private async Task AddStepAsync(Stage stage)
+    {
+        var name = _newStepNames.GetValueOrDefault(stage.Id, string.Empty);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        await RunAsync(() => Builder.AddStepAsync(stage.Id, name.Trim(), string.Empty));
+        _newStepNames[stage.Id] = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task DeleteStepAsync(Step step)
+    {
+        await RunAsync(() => Builder.DeleteStepAsync(step.Id));
+        await LoadAsync();
+    }
+
+    private async Task MoveStepAsync(Stage stage, Step step, int direction)
+    {
+        var ordered = stage.Steps.OrderBy(s => s.OrderIndex).Select(s => s.Id).ToList();
+        var index = ordered.IndexOf(step.Id);
+        var swapWith = index + direction;
+        if (swapWith < 0 || swapWith >= ordered.Count)
+        {
+            return;
+        }
+
+        (ordered[index], ordered[swapWith]) = (ordered[swapWith], ordered[index]);
+        await RunAsync(() => Builder.ReorderStepsAsync(stage.Id, ordered));
+        await LoadAsync();
+    }
+
+    private async Task UploadMediaAsync(Step step, InputFileChangeEventArgs e)
+    {
+        const long maxFileSize = 10 * 1024 * 1024; // images/GIFs only, not video
+        await RunAsync(async () =>
+        {
+            await using var stream = e.File.OpenReadStream(maxFileSize);
+            await Builder.AddMediaAssetAsync(step.Id, e.File.Name, stream);
+        });
+        await LoadAsync();
+    }
+
+    private async Task DeleteMediaAsync(MediaAsset media)
+    {
+        await RunAsync(() => Builder.DeleteMediaAssetAsync(media.Id));
+        await LoadAsync();
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        _error = null;
+        try
+        {
+            await action();
+        }
+        catch (WorkflowBuilderException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (IOException)
+        {
+            _error = "File too large (max 10 MB).";
+        }
+    }
+}

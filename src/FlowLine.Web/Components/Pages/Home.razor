@@ -1,0 +1,40 @@
+@page "/"
+@inject IRelayService Relay
+
+<PageTitle>FlowLine — Select Station</PageTitle>
+
+<div class="station-select">
+    <h1>Select your station</h1>
+
+    @if (_stations is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_stations.Count == 0)
+    {
+        <p>No stations are configured yet.</p>
+    }
+    else
+    {
+        <ul class="station-list">
+            @foreach (var station in _stations)
+            {
+                <li>
+                    <a href="@($"/station/{station.Id}")">
+                        <span class="station-name">@station.Name</span>
+                        <span class="station-detail">@station.Stage.Workflow.Name — @station.Stage.Name</span>
+                    </a>
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    private List<Station>? _stations;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stations = await Relay.GetStationsAsync();
+    }
+}

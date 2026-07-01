@@ -1,0 +1,207 @@
+@page "/station/{StationId:int}"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using Microsoft.EntityFrameworkCore
+@inject IRelayService Relay
+@inject IRelayNotifier Notifier
+
+<PageTitle>@(_station?.Name ?? "Station")</PageTitle>
+
+@if (_notFound)
+{
+    <p>Station @StationId not found.</p>
+}
+else if (_station is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="station" tabindex="0" @ref="_rootElement" @onkeydown="HandleKeyDown">
+        <header class="station-header">
+            <h1>@_station.Name</h1>
+            <span class="station-path">@_station.Stage.Workflow.Name — @_station.Stage.Name</span>
+            <span class="queue-depth">Queue: @_queueDepth waiting</span>
+        </header>
+
+        @if (_activeWorkItem is null)
+        {
+            <div class="idle">
+                <p>No units waiting. Idle.</p>
+            </div>
+        }
+        else
+        {
+            <div class="order-header">
+                <span>Order #@_activeWorkItem.OrderNumber</span>
+                <span>SKU @_activeWorkItem.Sku</span>
+                <span>Qty @_activeWorkItem.Quantity</span>
+                @if (!string.IsNullOrWhiteSpace(_activeWorkItem.Channel))
+                {
+                    <span>@_activeWorkItem.Channel</span>
+                }
+            </div>
+
+            @if (_currentStep is not null)
+            {
+                <div class="step">
+                    <p class="progress">Step @(_stepIndex + 1) of @_totalSteps</p>
+                    <h2>@_currentStep.Name</h2>
+                    <p class="instructions">@_currentStep.Instructions</p>
+
+                    @if (_currentStep.MediaAssets.Count > 0)
+                    {
+                        <div class="media">
+                            @foreach (var media in _currentStep.MediaAssets.OrderBy(m => m.DisplayOrder))
+                            {
+                                <img src="@($"/media/{media.FilePath}")" alt="@_currentStep.Name" />
+                            }
+                        </div>
+                    }
+                </div>
+
+                <button class="advance" @onclick="AdvanceAsync" disabled="@_advancing">
+                    Advance (Enter)
+                </button>
+            }
+
+            @if (_errorMessage is not null)
+            {
+                <p class="error">@_errorMessage</p>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int StationId { get; set; }
+
+    private Station? _station;
+    private bool _notFound;
+    private WorkItem? _activeWorkItem;
+    private Step? _currentStep;
+    private int _stepIndex;
+    private int _totalSteps;
+    private int _queueDepth;
+    private bool _advancing;
+    private string? _errorMessage;
+    private ElementReference _rootElement;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifier.StageChanged += OnStageChanged;
+
+        _station = await Relay.GetStationAsync(StationId);
+        if (_station is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        await RefreshAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _station is not null)
+        {
+            await _rootElement.FocusAsync();
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_station is null)
+        {
+            return;
+        }
+
+        _activeWorkItem = await Relay.GetActiveWorkItemAsync(_station.Id);
+        _activeWorkItem ??= await Relay.ClaimNextAsync(_station.Id);
+
+        _queueDepth = await Relay.GetQueueDepthAsync(_station.StageId);
+
+        UpdateCurrentStep();
+    }
+
+    private void UpdateCurrentStep()
+    {
+        var orderedSteps = _station!.Stage.Steps.OrderBy(s => s.OrderIndex).ToList();
+        _totalSteps = orderedSteps.Count;
+
+        if (_activeWorkItem is null)
+        {
+            _currentStep = null;
+            _stepIndex = 0;
+            return;
+        }
+
+        var completedStepIds = _activeWorkItem.StepCompletions.Select(sc => sc.StepId).ToHashSet();
+        _currentStep = orderedSteps.FirstOrDefault(s => !completedStepIds.Contains(s.Id));
+        _stepIndex = _currentStep is null ? orderedSteps.Count : orderedSteps.FindIndex(s => s.Id == _currentStep.Id);
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await AdvanceAsync();
+        }
+    }
+
+    private async Task AdvanceAsync()
+    {
+        // Disabling the button on this flag for the duration of the call is the debounce
+        // (FR-11): a request is always in flight for at most tens of ms, so re-enabling
+        // immediately after is more responsive than a fixed lockout while still making a
+        // double Enter/click a no-op.
+        if (_advancing || _activeWorkItem is null || _station is null)
+        {
+            return;
+        }
+
+        _advancing = true;
+        _errorMessage = null;
+        try
+        {
+            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id);
+            // Whatever the outcome — more steps left, handed off, or completed — refreshing
+            // shows the right next thing: the next step, or this station pulling its next unit.
+            await RefreshAsync();
+        }
+        catch (RelayOperationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            _errorMessage = "This unit was already advanced elsewhere — refreshed.";
+            await RefreshAsync();
+        }
+        finally
+        {
+            _advancing = false;
+        }
+    }
+
+    private void OnStageChanged(int stageId)
+    {
+        if (_station is null || stageId != _station.StageId)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshAsync();
+            StateHasChanged();
+        });
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Notifier.StageChanged -= OnStageChanged;
+        return ValueTask.CompletedTask;
+    }
+}

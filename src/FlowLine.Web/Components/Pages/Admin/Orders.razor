@@ -1,0 +1,125 @@
+@page "/admin/orders"
+@rendermode InteractiveServer
+@inject IOrderService OrderService
+@inject IWorkflowBuilderService Builder
+
+<PageTitle>Orders — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Orders</h1>
+
+    <div class="new-order">
+        <h2>New order</h2>
+        <select @bind="_workflowId">
+            <option value="0">Select a workflow…</option>
+            @foreach (var workflow in _workflows ?? [])
+            {
+                <option value="@workflow.Id">@workflow.Name</option>
+            }
+        </select>
+        <input @bind="_orderNumber" placeholder="Order #" />
+        <input @bind="_sku" placeholder="SKU" />
+        <input @bind="_quantity" type="number" min="1" placeholder="Qty" />
+        <input @bind="_channel" placeholder="Channel (optional)" />
+        <button @onclick="CreateAsync" disabled="@(!CanCreate)">Create</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+
+    @if (_workItems is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_workItems.Count == 0)
+    {
+        <p>No orders yet.</p>
+    }
+    else
+    {
+        <table class="workflow-table">
+            <thead>
+                <tr>
+                    <th>Order #</th>
+                    <th>SKU</th>
+                    <th>Qty</th>
+                    <th>Channel</th>
+                    <th>Workflow</th>
+                    <th>Current stage</th>
+                    <th>Status</th>
+                    <th>Claimed by</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var workItem in _workItems)
+                {
+                    <tr>
+                        <td>@workItem.OrderNumber</td>
+                        <td>@workItem.Sku</td>
+                        <td>@workItem.Quantity</td>
+                        <td>@workItem.Channel</td>
+                        <td>@workItem.Workflow.Name</td>
+                        <td>@workItem.CurrentStage.Name</td>
+                        <td>@workItem.Status</td>
+                        <td>@(workItem.ClaimedByStation?.Name ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private List<Workflow>? _workflows;
+    private List<WorkItem>? _workItems;
+    private int _workflowId;
+    private string _orderNumber = string.Empty;
+    private string _sku = string.Empty;
+    private int _quantity = 1;
+    private string _channel = string.Empty;
+    private string? _error;
+
+    private bool CanCreate =>
+        _workflowId > 0 && !string.IsNullOrWhiteSpace(_orderNumber) && !string.IsNullOrWhiteSpace(_sku) && _quantity > 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var allWorkflows = await Builder.GetWorkflowsAsync();
+        // Only workflows that can actually accept an order — active and with at least one
+        // stage to queue at — so picking one never hits OrderServiceException's "no stages" guard.
+        _workflows = allWorkflows.Where(w => w.IsActive && w.Stages.Count > 0).ToList();
+
+        await LoadWorkItemsAsync();
+    }
+
+    private async Task LoadWorkItemsAsync()
+    {
+        _workItems = await OrderService.GetWorkItemsAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        try
+        {
+            await OrderService.CreateWorkItemAsync(
+                _workflowId,
+                _orderNumber.Trim(),
+                _sku.Trim(),
+                _quantity,
+                string.IsNullOrWhiteSpace(_channel) ? null : _channel.Trim());
+
+            _orderNumber = string.Empty;
+            _sku = string.Empty;
+            _quantity = 1;
+            _channel = string.Empty;
+            await LoadWorkItemsAsync();
+        }
+        catch (OrderServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

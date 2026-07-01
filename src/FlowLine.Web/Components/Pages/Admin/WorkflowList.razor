@@ -1,0 +1,130 @@
+@page "/admin/workflows"
+@rendermode InteractiveServer
+@inject IWorkflowBuilderService Builder
+@inject NavigationManager Nav
+
+<PageTitle>Workflows — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Workflows</h1>
+
+    <div class="new-workflow">
+        <h2>New workflow</h2>
+        <input @bind="_newName" placeholder="Name" />
+        <input @bind="_newDescription" placeholder="Description (optional)" />
+        <button @onclick="CreateAsync" disabled="@string.IsNullOrWhiteSpace(_newName)">Create</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+
+    @if (_workflows is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_workflows.Count == 0)
+    {
+        <p>No workflows yet.</p>
+    }
+    else
+    {
+        <table class="workflow-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Description</th>
+                    <th>Stages</th>
+                    <th>Status</th>
+                    <th>Duplicate as</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var workflow in _workflows)
+                {
+                    <tr>
+                        <td><a href="@($"/admin/workflows/{workflow.Id}")">@workflow.Name</a></td>
+                        <td>@workflow.Description</td>
+                        <td>@workflow.Stages.Count</td>
+                        <td>@(workflow.IsActive ? "Active" : "Archived")</td>
+                        <td>
+                            <input @bind="_duplicateNames[workflow.Id]" placeholder="@($"{workflow.Name} (Copy)")" />
+                            <button @onclick="() => DuplicateAsync(workflow.Id)">Duplicate</button>
+                        </td>
+                        <td>
+                            <button @onclick="() => ToggleActiveAsync(workflow)">
+                                @(workflow.IsActive ? "Archive" : "Activate")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private List<Workflow>? _workflows;
+    private string _newName = string.Empty;
+    private string _newDescription = string.Empty;
+    private string? _error;
+    private readonly Dictionary<int, string> _duplicateNames = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _workflows = await Builder.GetWorkflowsAsync();
+
+        // @bind targets the dictionary indexer directly, so every workflow needs an entry up
+        // front — an indexer getter on a missing key would throw.
+        foreach (var workflow in _workflows)
+        {
+            _duplicateNames.TryAdd(workflow.Id, string.Empty);
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        try
+        {
+            var workflow = await Builder.CreateWorkflowAsync(_newName.Trim(), string.IsNullOrWhiteSpace(_newDescription) ? null : _newDescription.Trim());
+            Nav.NavigateTo($"/admin/workflows/{workflow.Id}");
+        }
+        catch (WorkflowBuilderException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task DuplicateAsync(int workflowId)
+    {
+        _error = null;
+        var sourceWorkflow = _workflows!.Single(w => w.Id == workflowId);
+        var newName = _duplicateNames.TryGetValue(workflowId, out var name) && !string.IsNullOrWhiteSpace(name)
+            ? name.Trim()
+            : $"{sourceWorkflow.Name} (Copy)";
+
+        try
+        {
+            await Builder.DuplicateWorkflowAsync(workflowId, newName);
+            await LoadAsync();
+        }
+        catch (WorkflowBuilderException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ToggleActiveAsync(Workflow workflow)
+    {
+        await Builder.SetWorkflowActiveAsync(workflow.Id, !workflow.IsActive);
+        await LoadAsync();
+    }
+}

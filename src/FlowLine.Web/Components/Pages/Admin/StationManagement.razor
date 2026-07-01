@@ -1,0 +1,151 @@
+@page "/admin/stations"
+@rendermode InteractiveServer
+@inject IStationService StationService
+@inject IWorkflowBuilderService Builder
+
+<PageTitle>Stations — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Stations</h1>
+    <p>A station is a physical screen bound to one stage of one workflow — without one, nothing can claim work at that stage.</p>
+
+    <div class="new-station">
+        <h2>New station</h2>
+        <select @bind="_selectedWorkflowId" @bind:after="OnWorkflowChanged">
+            <option value="0">Select a workflow…</option>
+            @foreach (var workflow in _workflows ?? [])
+            {
+                <option value="@workflow.Id">@workflow.Name</option>
+            }
+        </select>
+        <select @bind="_selectedStageId">
+            <option value="0">Select a stage…</option>
+            @foreach (var stage in StagesForSelectedWorkflow())
+            {
+                <option value="@stage.Id">@stage.Name</option>
+            }
+        </select>
+        <input @bind="_newStationName" placeholder="Station name" />
+        <button @onclick="CreateAsync" disabled="@(!CanCreate)">Create</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+
+    @if (_stations is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_stations.Count == 0)
+    {
+        <p>No stations configured yet.</p>
+    }
+    else
+    {
+        <table class="workflow-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Workflow</th>
+                    <th>Stage</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var station in _stations)
+                {
+                    <tr>
+                        <td><input @bind="station.Name" /></td>
+                        <td>@station.Stage.Workflow.Name</td>
+                        <td>@station.Stage.Name</td>
+                        <td>
+                            <button @onclick="() => SaveAsync(station)">Save</button>
+                            <button @onclick="() => DeleteAsync(station)">Delete</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private List<Workflow>? _workflows;
+    private List<Station>? _stations;
+    private int _selectedWorkflowId;
+    private int _selectedStageId;
+    private string _newStationName = string.Empty;
+    private string? _error;
+
+    private bool CanCreate => _selectedStageId > 0 && !string.IsNullOrWhiteSpace(_newStationName);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workflows = await Builder.GetWorkflowsAsync();
+        await LoadStationsAsync();
+    }
+
+    private async Task LoadStationsAsync()
+    {
+        _stations = await StationService.GetStationsAsync();
+    }
+
+    private void OnWorkflowChanged()
+    {
+        // Stage IDs are global, not scoped per workflow — without this, a stale
+        // _selectedStageId from the previous workflow could coincidentally match a stage
+        // in the new one and silently bind the station to the wrong stage.
+        _selectedStageId = 0;
+    }
+
+    private List<Stage> StagesForSelectedWorkflow()
+    {
+        return _workflows?
+            .FirstOrDefault(w => w.Id == _selectedWorkflowId)?
+            .Stages.OrderBy(s => s.OrderIndex).ToList() ?? [];
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        try
+        {
+            await StationService.CreateStationAsync(_selectedStageId, _newStationName.Trim());
+            _newStationName = string.Empty;
+            await LoadStationsAsync();
+        }
+        catch (StationServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SaveAsync(Station station)
+    {
+        _error = null;
+        try
+        {
+            await StationService.UpdateStationAsync(station.Id, station.Name);
+        }
+        catch (StationServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task DeleteAsync(Station station)
+    {
+        _error = null;
+        try
+        {
+            await StationService.DeleteStationAsync(station.Id);
+            await LoadStationsAsync();
+        }
+        catch (StationServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

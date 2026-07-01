@@ -1,0 +1,30 @@
+# Build output
+bin/
+obj/
+out/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# SQLite database + WAL/SHM files (local runtime data, not source)
+*.db
+*.db-shm
+*.db-wal
+
+# Uploaded Step media (FR-4, runtime data, not source)
+src/FlowLine.Web/wwwroot/media/*
+!src/FlowLine.Web/wwwroot/media/.gitkeep
+
+# User-specific files
+*.rsuser
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings (machine-specific, not shared)
+.claude/settings.local.json

@@ -1,0 +1,70 @@
+@page "/admin/timing"
+@rendermode InteractiveServer
+@inject ITimingService Timing
+
+<PageTitle>Timing Review — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Timing review</h1>
+
+    @if (_timings is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_timings.Count == 0)
+    {
+        <p>No completed orders yet.</p>
+    }
+    else
+    {
+        @foreach (var workflowGroup in _timings.GroupBy(t => t.WorkflowName))
+        {
+            var stageNames = workflowGroup.First().StageDurations.Select(sd => sd.StageName).ToList();
+
+            <h2>@workflowGroup.Key</h2>
+            <table class="workflow-table">
+                <thead>
+                    <tr>
+                        <th>Order #</th>
+                        <th>SKU</th>
+                        @foreach (var stageName in stageNames)
+                        {
+                            <th>@stageName</th>
+                        }
+                        <th>Total</th>
+                        <th>Completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var timing in workflowGroup)
+                    {
+                        <tr>
+                            <td>@timing.OrderNumber</td>
+                            <td>@timing.Sku</td>
+                            @foreach (var stageDuration in timing.StageDurations)
+                            {
+                                <td>@FormatDuration(stageDuration.Duration)</td>
+                            }
+                            <td>@FormatDuration(timing.TotalDuration)</td>
+                            <td>@timing.CompletedAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    private List<CompletedOrderTiming>? _timings;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _timings = await Timing.GetCompletedOrderTimingsAsync();
+    }
+
+    // Round to the nearest second — sub-second precision is noise for line-balancing review
+    // (worker task times are measured in minutes), and TimeSpan's default ToString() format
+    // would otherwise print fractional seconds.
+    private static string FormatDuration(TimeSpan duration) => TimeSpan.FromSeconds(Math.Round(duration.TotalSeconds)).ToString();
+}
