@@ -1,4 +1,5 @@
 using FlowLine.Domain.Entities;
+using FlowLine.Domain.Entities.External;
 using Microsoft.EntityFrameworkCore;
 
 namespace FlowLine.Infrastructure.Data;
@@ -12,6 +13,11 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
     public DbSet<Station> Stations => Set<Station>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<StepCompletion> StepCompletions => Set<StepCompletion>();
+
+    // Company-owned, pre-existing tables (SQL Server deployment only). Mapped read-only and
+    // excluded from migrations — see ConfigureExternalTables below and the entity XML docs.
+    public DbSet<HistoryRecord> History => Set<HistoryRecord>();
+    public DbSet<StaffMember> Staff => Set<StaffMember>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -89,6 +95,46 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
         modelBuilder.Entity<WorkItem>()
             .Property(wi => wi.RowVersion)
             .IsConcurrencyToken();
+
+        ConfigureExternalTables(modelBuilder);
+    }
+
+    /// <summary>
+    /// Maps the two company-owned tables FlowLine only ever *reads* (History as an order source,
+    /// Staff_Table as a name lookup). Every table/column is named to match the existing schema,
+    /// and every entity is marked <c>ExcludeFromMigrations()</c> so FlowLine's own migrations
+    /// never emit DDL against tables it doesn't own — <c>Database.Migrate()</c> stays responsible
+    /// only for FlowLine's seven tables. These tables don't exist under the SQLite dev provider;
+    /// callers guard on that (the import UI is a SQL Server-only feature).
+    /// </summary>
+    private static void ConfigureExternalTables(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<HistoryRecord>(e =>
+        {
+            e.ToTable("History", t => t.ExcludeFromMigrations());
+            e.HasKey(h => h.Id);
+            e.Property(h => h.Id).HasColumnName("ID");
+            e.Property(h => h.OrderId).HasColumnName("OrderId");
+            e.Property(h => h.Sku).HasColumnName("SKU");
+            e.Property(h => h.Qty).HasColumnName("QTY");
+            e.Property(h => h.Channel).HasColumnName("Channel");
+            e.Property(h => h.Date).HasColumnName("Date");
+            e.Property(h => h.IsTested).HasColumnName("IsTested");
+            e.Property(h => h.TestedBy).HasColumnName("TestedBy");
+            e.Property(h => h.Status).HasColumnName("Status");
+            e.Property(h => h.PackedBy).HasColumnName("PackedBy");
+            e.Property(h => h.PackedDate).HasColumnName("PackedDate");
+            e.Property(h => h.AssigneeNumber).HasColumnName("Assigne Number");
+        });
+
+        modelBuilder.Entity<StaffMember>(e =>
+        {
+            e.ToTable("Staff_Table", t => t.ExcludeFromMigrations());
+            e.HasKey(s => s.StaffNumber);
+            e.Property(s => s.StaffNumber).HasColumnName("Staff number").ValueGeneratedNever();
+            e.Property(s => s.Name).HasColumnName("Name");
+            e.Property(s => s.TestingPower).HasColumnName("Testing Power");
+        });
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

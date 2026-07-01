@@ -4,6 +4,7 @@
     <ProjectReference Include="..\FlowLine.Domain\FlowLine.Domain.csproj" />
     <ProjectReference Include="..\FlowLine.Infrastructure\FlowLine.Infrastructure.csproj" />
     <ProjectReference Include="..\FlowLine.Application\FlowLine.Application.csproj" />
+    <ProjectReference Include="..\FlowLine.Migrations.SqlServer\FlowLine.Migrations.SqlServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>

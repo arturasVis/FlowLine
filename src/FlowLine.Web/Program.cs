@@ -13,8 +13,29 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// Provider is config-driven (NFR-2/NFR-3): SQLite for zero-friction local dev, SQL Server for
+// the company deployment. Switching is a config change (DatabaseProvider + connection string),
+// not a code edit. Each provider has its own migrations assembly — SQLite's live in
+// FlowLine.Infrastructure, SQL Server's in FlowLine.Migrations.SqlServer — because one assembly
+// can only hold a single model snapshot per DbContext.
+var databaseProvider = builder.Configuration["DatabaseProvider"] ?? "Sqlite";
+var connectionString = builder.Configuration.GetConnectionString("FlowLine");
 builder.Services.AddDbContext<FlowLineDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("FlowLine")));
+{
+    switch (databaseProvider.ToLowerInvariant())
+    {
+        case "sqlserver":
+            options.UseSqlServer(connectionString,
+                sql => sql.MigrationsAssembly("FlowLine.Migrations.SqlServer"));
+            break;
+        case "sqlite":
+            options.UseSqlite(connectionString);
+            break;
+        default:
+            throw new InvalidOperationException(
+                $"Unknown DatabaseProvider '{databaseProvider}'. Use 'Sqlite' or 'SqlServer'.");
+    }
+});
 
 // Singleton: must outlive any one circuit so a hand-off on one browser's circuit can
 // reach a station screen on a different browser's circuit (PRD FR-16/NFR-9).
@@ -28,6 +49,9 @@ Directory.CreateDirectory(mediaRootPath);
 builder.Services.AddSingleton(new MediaStorageOptions { RootPath = mediaRootPath });
 builder.Services.AddScoped<IWorkflowBuilderService, WorkflowBuilderService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
+// Reads orders from the company History table — only functional on SQL Server, where those
+// external tables exist. Registered unconditionally; the import UI guards on the provider.
+builder.Services.AddScoped<IOrderImportService, OrderImportService>();
 builder.Services.AddScoped<ITimingService, TimingService>();
 builder.Services.AddScoped<IStationService, StationService>();
 

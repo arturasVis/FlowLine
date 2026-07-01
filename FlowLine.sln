@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlowLine.Tests", "tests\Flo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlowLine.Application", "src\FlowLine.Application\FlowLine.Application.csproj", "{5C6D72E2-ADC6-40E3-A20A-B1C3EADB0434}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FlowLine.Migrations.SqlServer", "src\FlowLine.Migrations.SqlServer\FlowLine.Migrations.SqlServer.csproj", "{4F9E8E5C-0265-4620-A2C2-F841D7A3915B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -46,6 +48,10 @@ Global
 		{5C6D72E2-ADC6-40E3-A20A-B1C3EADB0434}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5C6D72E2-ADC6-40E3-A20A-B1C3EADB0434}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5C6D72E2-ADC6-40E3-A20A-B1C3EADB0434}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4F9E8E5C-0265-4620-A2C2-F841D7A3915B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4F9E8E5C-0265-4620-A2C2-F841D7A3915B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4F9E8E5C-0265-4620-A2C2-F841D7A3915B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4F9E8E5C-0265-4620-A2C2-F841D7A3915B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E932B3A2-2DB5-45A2-B010-3194859DE757} = {6B92FBA6-91BE-4161-B6D7-59DDBD6B1F5B}
@@ -53,5 +59,6 @@ Global
 		{A182112E-F631-495C-9CD0-7931B30291ED} = {6B92FBA6-91BE-4161-B6D7-59DDBD6B1F5B}
 		{FB9CF63A-FDDA-4047-8517-8CC53636A6ED} = {64D64F77-6ECD-4D54-A789-7DDF417462C0}
 		{5C6D72E2-ADC6-40E3-A20A-B1C3EADB0434} = {6B92FBA6-91BE-4161-B6D7-59DDBD6B1F5B}
+		{4F9E8E5C-0265-4620-A2C2-F841D7A3915B} = {6B92FBA6-91BE-4161-B6D7-59DDBD6B1F5B}
 	EndGlobalSection
 EndGlobal

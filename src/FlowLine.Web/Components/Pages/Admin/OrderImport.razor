@@ -1,0 +1,159 @@
+@page "/admin/import"
+@rendermode InteractiveServer
+@inject IOrderImportService Import
+@inject IWorkflowBuilderService Builder
+
+<PageTitle>Import Orders — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Import from company History</h1>
+    <p>Pull pending orders straight from the company <span class="mono">History</span> table and queue them into a workflow. Orders already in FlowLine are hidden. This reads the company database only — it never writes back to it.</p>
+
+    @if (!Import.ExternalTablesSupported)
+    {
+        <p class="error">Order import is only available when FlowLine is running on the company SQL Server. This instance is on the local SQLite dev database, which has no <span class="mono">History</span> table.</p>
+    }
+    else
+    {
+        <div class="new-order">
+            <select @bind="_workflowId">
+                <option value="0">Import into workflow…</option>
+                @foreach (var workflow in _workflows ?? [])
+                {
+                    <option value="@workflow.Id">@workflow.Name</option>
+                }
+            </select>
+            <button @onclick="ImportSelectedAsync" disabled="@(!CanImport)">
+                Import @_selected.Count selected
+            </button>
+        </div>
+
+        @if (_error is not null)
+        {
+            <p class="error">@_error</p>
+        }
+        @if (_notice is not null)
+        {
+            <p class="notice">@_notice</p>
+        }
+
+        @if (_orders is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (_orders.Count == 0)
+        {
+            <p>No pending orders in History to import — every History order is already in FlowLine.</p>
+        }
+        else
+        {
+            <table class="workflow-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" checked="@AllSelected" @onchange="ToggleAll" /></th>
+                        <th>Order #</th>
+                        <th>SKU</th>
+                        <th>Qty</th>
+                        <th>Channel</th>
+                        <th>Date</th>
+                        <th>Assignee</th>
+                        <th>Company status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var order in _orders)
+                    {
+                        <tr>
+                            <td>
+                                <input type="checkbox"
+                                       checked="@_selected.Contains(order.OrderId)"
+                                       @onchange="e => ToggleOne(order.OrderId, e)" />
+                            </td>
+                            <td><span class="mono">@order.OrderId</span></td>
+                            <td><span class="mono">@order.Sku</span></td>
+                            <td>@order.Qty</td>
+                            <td>@order.Channel</td>
+                            <td>@order.Date.ToString("yyyy-MM-dd")</td>
+                            <td>@(order.AssigneeName ?? (order.AssigneeNumber?.ToString() ?? "—"))</td>
+                            <td>@order.CompanyStatus</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    private List<Workflow>? _workflows;
+    private List<ImportableOrder>? _orders;
+    private readonly HashSet<string> _selected = [];
+    private int _workflowId;
+    private string? _error;
+    private string? _notice;
+
+    private bool CanImport => _workflowId > 0 && _selected.Count > 0;
+    private bool AllSelected => _orders is { Count: > 0 } && _selected.Count == _orders.Count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Import.ExternalTablesSupported)
+        {
+            return;
+        }
+
+        var allWorkflows = await Builder.GetWorkflowsAsync();
+        // Same filter as the manual Orders screen: only active workflows that have a stage to
+        // queue at, so an import never hits OrderService's no-stages guard.
+        _workflows = allWorkflows.Where(w => w.IsActive && w.Stages.Count > 0).ToList();
+        await LoadOrdersAsync();
+    }
+
+    private async Task LoadOrdersAsync()
+    {
+        _orders = await Import.GetImportableOrdersAsync();
+        // Drop any selections that no longer appear (e.g. imported on the last click).
+        _selected.RemoveWhere(id => !_orders.Any(o => o.OrderId == id));
+    }
+
+    private void ToggleOne(string orderId, ChangeEventArgs e)
+    {
+        if (e.Value is true)
+        {
+            _selected.Add(orderId);
+        }
+        else
+        {
+            _selected.Remove(orderId);
+        }
+    }
+
+    private void ToggleAll(ChangeEventArgs e)
+    {
+        _selected.Clear();
+        if (e.Value is true && _orders is not null)
+        {
+            foreach (var order in _orders)
+            {
+                _selected.Add(order.OrderId);
+            }
+        }
+    }
+
+    private async Task ImportSelectedAsync()
+    {
+        _error = null;
+        _notice = null;
+        try
+        {
+            var count = await Import.ImportAsync(_workflowId, _selected.ToList());
+            _notice = count == 1 ? "Imported 1 order." : $"Imported {count} orders.";
+            _selected.Clear();
+            await LoadOrdersAsync();
+        }
+        catch (OrderServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

@@ -361,6 +361,16 @@ button.danger:hover { color: #fff; background: var(--danger); border-color: var(
     margin-top: 1rem;
 }
 
+.notice {
+    color: #146c43;
+    background: #d1f0df;
+    border: 1px solid #a3ddbe;
+    border-radius: var(--radius-sm);
+    padding: 0.7rem 0.9rem;
+    font-weight: 600;
+    margin-top: 1rem;
+}
+
 /* ---- Admin pages --------------------------------------------------------- */
 
 .admin-page { max-width: 72rem; margin: 2rem auto; padding: 0 2rem 3rem; }
