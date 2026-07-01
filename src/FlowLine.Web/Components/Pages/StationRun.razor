@@ -115,6 +115,7 @@ else
     private string _prebuildEntry = string.Empty;
     private ElementReference _prebuildInput;
     private bool _prebuildInputFocused;
+    private bool _focusRootPending;
 
     // The first stage of the workflow (lowest OrderIndex) — where a prebuild is scanned to start a unit.
     private bool IsEntryStage =>
@@ -165,6 +166,14 @@ else
         {
             _prebuildInputFocused = true;
             await _prebuildInput.FocusAsync();
+        }
+
+        // After a scan creates the unit, the scan box is gone — hand focus back to the station div
+        // so Enter advances steps again.
+        if (_focusRootPending)
+        {
+            _focusRootPending = false;
+            await _rootElement.FocusAsync();
         }
     }
 
@@ -238,6 +247,7 @@ else
             await Relay.CreateFromPrebuildAsync(_station.Id, _prebuildEntry);
             _prebuildEntry = string.Empty;
             await RefreshAsync();
+            _focusRootPending = true;  // scan box is about to disappear — refocus the station for Enter
         }
         catch (RelayOperationException ex)
         {
