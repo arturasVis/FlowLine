@@ -18,6 +18,8 @@ public class StationService(FlowLineDbContext db) : IStationService
 
     public async Task<Station> CreateStationAsync(int stageId, string name, CancellationToken cancellationToken = default)
     {
+        name = ValidateName(name);
+
         _ = await db.Stages.FindAsync([stageId], cancellationToken)
             ?? throw new StationServiceException($"Stage {stageId} does not exist.");
 
@@ -29,10 +31,25 @@ public class StationService(FlowLineDbContext db) : IStationService
 
     public async Task UpdateStationAsync(int stationId, string name, CancellationToken cancellationToken = default)
     {
+        name = ValidateName(name);
+
         var station = await db.Stations.FindAsync([stationId], cancellationToken)
             ?? throw new StationServiceException($"Station {stationId} does not exist.");
         station.Name = name;
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // The UI disables Create on a blank name but nothing stops a blank rename (or a
+    // non-UI caller), so enforce the invariant here — a nameless station is unidentifiable
+    // in the station picker and admin table. Trim so " Bench 1 " and "Bench 1" don't diverge.
+    private static string ValidateName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new StationServiceException("Station name can't be blank.");
+        }
+
+        return name.Trim();
     }
 
     public async Task DeleteStationAsync(int stationId, CancellationToken cancellationToken = default)

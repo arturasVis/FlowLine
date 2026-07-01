@@ -68,6 +68,72 @@ public class StationServiceTests
         }
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdateStationAsync_BlankName_ThrowsAndLeavesNameIntact(string blank)
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = new FlowLineDbContext(options);
+            var workflow = new Workflow { Name = "RMA Teardown" };
+            var stage = new Stage { Workflow = workflow, Name = "Inspect", OrderIndex = 0 };
+            workflow.Stages.Add(stage);
+            db.Workflows.Add(workflow);
+            await db.SaveChangesAsync();
+
+            var service = new StationService(db);
+            var station = await service.CreateStationAsync(stage.Id, "Bench 1");
+
+            await Assert.ThrowsAsync<StationServiceException>(
+                () => service.UpdateStationAsync(station.Id, blank));
+
+            var reloaded = await db.Stations.SingleAsync(s => s.Id == station.Id);
+            Assert.Equal("Bench 1", reloaded.Name);
+        }
+    }
+
+    [Fact]
+    public async Task CreateStationAsync_BlankName_Throws()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = new FlowLineDbContext(options);
+            var workflow = new Workflow { Name = "RMA Teardown" };
+            var stage = new Stage { Workflow = workflow, Name = "Inspect", OrderIndex = 0 };
+            workflow.Stages.Add(stage);
+            db.Workflows.Add(workflow);
+            await db.SaveChangesAsync();
+
+            var service = new StationService(db);
+
+            await Assert.ThrowsAsync<StationServiceException>(
+                () => service.CreateStationAsync(stage.Id, "   "));
+        }
+    }
+
+    [Fact]
+    public async Task CreateStationAsync_TrimsSurroundingWhitespace()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = new FlowLineDbContext(options);
+            var workflow = new Workflow { Name = "RMA Teardown" };
+            var stage = new Stage { Workflow = workflow, Name = "Inspect", OrderIndex = 0 };
+            workflow.Stages.Add(stage);
+            db.Workflows.Add(workflow);
+            await db.SaveChangesAsync();
+
+            var service = new StationService(db);
+            var station = await service.CreateStationAsync(stage.Id, "  Bench 1  ");
+
+            Assert.Equal("Bench 1", station.Name);
+        }
+    }
+
     [Fact]
     public async Task DeleteStationAsync_UnclaimedStation_Succeeds()
     {
