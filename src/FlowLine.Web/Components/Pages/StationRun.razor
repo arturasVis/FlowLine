@@ -4,6 +4,8 @@
 @using Microsoft.EntityFrameworkCore
 @inject IRelayService Relay
 @inject IRelayNotifier Notifier
+@inject IAssignmentService Assignments
+@inject NavigationManager Nav
 
 <PageTitle>@(_station?.Name ?? "Station")</PageTitle>
 
@@ -40,7 +42,23 @@ else
                 {
                     <span>@_activeWorkItem.Channel</span>
                 }
+                @if (!string.IsNullOrEmpty(_activeWorkItem.PrebuildId))
+                {
+                    <span class="prebuild-badge">Prebuild @_activeWorkItem.PrebuildId@(_prebuildInfo is not null ? $" — {_prebuildInfo.Sku}" : "")</span>
+                }
             </div>
+
+            @if (NeedsPrebuild)
+            {
+                <div class="prebuild-scan">
+                    <p>This build starts from a prebuild. Scan or type its ID to begin.</p>
+                    <input @ref="_prebuildInput" @bind="_prebuildEntry" @bind:event="oninput"
+                           placeholder="Prebuild ID" @onkeydown="HandlePrebuildKey" />
+                    <button @onclick="SubmitPrebuildAsync" disabled="@(_advancing || string.IsNullOrWhiteSpace(_prebuildEntry))">
+                        Attach prebuild
+                    </button>
+                </div>
+            }
 
             @if (_currentStep is not null)
             {
@@ -60,7 +78,7 @@ else
                     }
                 </div>
 
-                <button class="advance" @onclick="AdvanceAsync" disabled="@_advancing">
+                <button class="advance" @onclick="AdvanceAsync" disabled="@(_advancing || NeedsPrebuild)">
                     Advance (Enter)
                 </button>
             }
@@ -77,6 +95,9 @@ else
     [Parameter]
     public int StationId { get; set; }
 
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
     private Station? _station;
     private bool _notFound;
     private WorkItem? _activeWorkItem;
@@ -87,6 +108,18 @@ else
     private bool _advancing;
     private string? _errorMessage;
     private ElementReference _rootElement;
+
+    private string _prebuildEntry = string.Empty;
+    private HistoryRecord? _prebuildInfo;
+    private ElementReference _prebuildInput;
+    private bool _prebuildInputFocused;
+
+    // True while a prebuild-requiring workflow's unit still has no prebuild attached — blocks
+    // Advance until one is scanned. Units start at stage 1, so in practice this is the first step.
+    private bool NeedsPrebuild =>
+        _station is not null && _activeWorkItem is not null
+        && _station.Stage.Workflow.RequiresPrebuild
+        && string.IsNullOrEmpty(_activeWorkItem.PrebuildId);
 
     protected override async Task OnInitializedAsync()
     {
@@ -99,6 +132,18 @@ else
             return;
         }
 
+        // URL-guard: a level-1 operator can only run stations of a workflow assigned to them.
+        var user = AuthState is null ? null : (await AuthState).User;
+        if (user is not null && user.GetLevel() <= AccessLevel.Staff)
+        {
+            var assigned = await Assignments.GetAssignedWorkflowIdsAsync(user.GetStaffNumber());
+            if (!assigned.Contains(_station.Stage.WorkflowId))
+            {
+                Nav.NavigateTo("/");
+                return;
+            }
+        }
+
         await RefreshAsync();
     }
 
@@ -107,6 +152,13 @@ else
         if (firstRender && _station is not null)
         {
             await _rootElement.FocusAsync();
+        }
+
+        // Put the cursor in the scan box so a barcode scanner's keystrokes land there directly.
+        if (NeedsPrebuild && !_prebuildInputFocused)
+        {
+            _prebuildInputFocused = true;
+            await _prebuildInput.FocusAsync();
         }
     }
 
@@ -121,6 +173,13 @@ else
         _activeWorkItem ??= await Relay.ClaimNextAsync(_station.Id);
 
         _queueDepth = await Relay.GetQueueDepthAsync(_station.StageId);
+
+        // Resolve prebuild History details for the badge (once per refresh); re-arm auto-focus of
+        // the scan box for a freshly claimed unit that still needs one.
+        _prebuildInputFocused = false;
+        _prebuildInfo = !string.IsNullOrEmpty(_activeWorkItem?.PrebuildId)
+            ? await Relay.GetPrebuildInfoAsync(_activeWorkItem.PrebuildId)
+            : null;
 
         UpdateCurrentStep();
     }
@@ -150,13 +209,43 @@ else
         }
     }
 
+    private async Task HandlePrebuildKey(KeyboardEventArgs e)
+    {
+        // Barcode scanners emit the code then an Enter — so Enter in the scan box submits it.
+        if (e.Key == "Enter")
+        {
+            await SubmitPrebuildAsync();
+        }
+    }
+
+    private async Task SubmitPrebuildAsync()
+    {
+        if (_advancing || _activeWorkItem is null || _station is null || string.IsNullOrWhiteSpace(_prebuildEntry))
+        {
+            return;
+        }
+
+        _errorMessage = null;
+        try
+        {
+            await Relay.SetPrebuildAsync(_activeWorkItem.Id, _station.Id, _prebuildEntry);
+            _prebuildEntry = string.Empty;
+            await RefreshAsync();
+        }
+        catch (RelayOperationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+    }
+
     private async Task AdvanceAsync()
     {
         // Disabling the button on this flag for the duration of the call is the debounce
         // (FR-11): a request is always in flight for at most tens of ms, so re-enabling
         // immediately after is more responsive than a fixed lockout while still making a
         // double Enter/click a no-op.
-        if (_advancing || _activeWorkItem is null || _station is null)
+        // NeedsPrebuild blocks advancing (and swallows a stray Enter) until a prebuild is attached.
+        if (_advancing || _activeWorkItem is null || _station is null || NeedsPrebuild)
         {
             return;
         }

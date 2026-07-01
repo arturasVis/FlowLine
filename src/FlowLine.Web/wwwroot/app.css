@@ -136,8 +136,9 @@ p { margin: 0.5rem 0; }
 
 .sidebar-footer {
     display: flex;
-    align-items: center;
-    gap: 0.55rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
     padding: 1rem 1.4rem;
     font-size: 0.85rem;
     font-weight: 600;
@@ -145,6 +146,70 @@ p { margin: 0.5rem 0; }
     border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 .sidebar-footer .status-dot { color: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18); }
+
+.user-chip { display: flex; flex-direction: column; line-height: 1.25; }
+.user-chip .user-name { color: var(--side-text-strong); font-size: 0.92rem; }
+.user-chip .user-level { color: var(--side-heading); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.logout-form { margin: 0; }
+.logout-button {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--side-text);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.7rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.logout-button:hover { background: rgba(255, 255, 255, 0.12); color: var(--side-text-strong); }
+
+/* ---- Login screen -------------------------------------------------------- */
+
+.auth-main {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--side-bg);
+    padding: 2rem;
+}
+.login-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    padding: 2.2rem 2.4rem;
+    width: 100%;
+    max-width: 22rem;
+    text-align: center;
+}
+.login-brand { font-weight: 800; font-size: 1.25rem; color: var(--text); margin-bottom: 1.2rem; }
+.login-brand .brand-mark { color: var(--accent); margin-right: 0.3rem; }
+.login-card h1 { margin: 0 0 0.3rem; font-size: 1.5rem; }
+.login-hint { color: var(--muted); margin: 0 0 1.4rem; font-size: 0.95rem; }
+.login-form { display: flex; flex-direction: column; gap: 0.8rem; }
+.login-input {
+    font-size: 1.5rem;
+    text-align: center;
+    letter-spacing: 0.25em;
+    padding: 0.7rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+}
+.login-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+.login-button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+.login-button:hover { background: var(--accent-hover); }
+.login-card .error { text-align: left; }
 
 .app-main { flex: 1; min-width: 0; }
 
@@ -234,6 +299,25 @@ button.danger:hover { color: #fff; background: var(--danger); border-color: var(
 /* ---- Station picker (home) ---------------------------------------------- */
 
 .station-select { max-width: 66rem; margin: 2.25rem auto; padding: 0 2rem; }
+.back-link { display: inline-block; margin-bottom: 0.6rem; font-weight: 600; font-size: 0.92rem; }
+
+/* ---- Prebuild -----------------------------------------------------------  */
+.prebuild-toggle { display: inline-flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0 1.2rem; font-weight: 600; }
+.prebuild-badge {
+    background: var(--accent-soft); color: var(--accent-hover);
+    border: 1px solid var(--accent-bright); border-radius: 999px;
+    padding: 0.15rem 0.75rem; font-weight: 700;
+}
+.prebuild-scan {
+    background: var(--accent-soft); border: 1px solid var(--accent-bright);
+    border-radius: var(--radius); padding: 1rem 1.2rem; margin: 1rem 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem;
+}
+.prebuild-scan p { width: 100%; margin: 0 0 0.2rem; font-weight: 700; color: var(--accent-hover); }
+.prebuild-scan input {
+    font-size: 1.3rem; padding: 0.5rem 0.7rem; letter-spacing: 0.08em;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+}
 
 .station-list {
     list-style: none;

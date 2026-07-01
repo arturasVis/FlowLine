@@ -23,6 +23,9 @@ public interface IWorkflowBuilderService
     /// <summary>"Archive" (FR-1) is IsActive = false, not a delete — history (WorkItems, timings) stays intact.</summary>
     Task SetWorkflowActiveAsync(int workflowId, bool isActive, CancellationToken cancellationToken = default);
 
+    /// <summary>Toggles whether units in this workflow must have a prebuild ID scanned at step 1.</summary>
+    Task SetWorkflowRequiresPrebuildAsync(int workflowId, bool requiresPrebuild, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Deep-clones a workflow's whole template (stages, steps, media — including copying the
     /// underlying media files, so deleting media on one copy never affects the other) under a

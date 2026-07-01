@@ -1,5 +1,6 @@
 @page "/admin/import"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IOrderImportService Import
 @inject IWorkflowBuilderService Builder
 

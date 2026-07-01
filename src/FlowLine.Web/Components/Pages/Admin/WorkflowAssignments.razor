@@ -1,0 +1,104 @@
+@page "/admin/assignments"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
+@inject IWorkflowBuilderService Builder
+@inject IStaffService StaffService
+@inject IAssignmentService Assignments
+
+<PageTitle>Assign Workflows — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Assign workflows to staff</h1>
+    <p>Level-1 staff only see workflows assigned to them in the station picker. Level 2 and 3 staff see every workflow regardless, so assignments have no effect on them.</p>
+
+    <div class="new-order">
+        <select @bind="_workflowId" @bind:after="LoadAssignmentsAsync">
+            <option value="0">Select a workflow…</option>
+            @foreach (var workflow in _workflows ?? [])
+            {
+                <option value="@workflow.Id">@workflow.Name</option>
+            }
+        </select>
+    </div>
+
+    @if (_workflowId > 0)
+    {
+        @if (_staff is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (_staff.Count == 0)
+        {
+            <p>No staff found.</p>
+        }
+        else
+        {
+            <table class="workflow-table">
+                <thead>
+                    <tr>
+                        <th>Staff #</th>
+                        <th>Name</th>
+                        <th>Level</th>
+                        <th>Assigned</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var member in _staff)
+                    {
+                        <tr>
+                            <td><span class="mono">@member.StaffNumber</span></td>
+                            <td>@member.Name</td>
+                            <td>@LevelLabel(member.TestingPower)</td>
+                            <td>
+                                <input type="checkbox"
+                                       checked="@_assigned.Contains(member.StaffNumber)"
+                                       @onchange="e => ToggleAsync(member.StaffNumber, e)" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    private List<Workflow>? _workflows;
+    private List<StaffMember>? _staff;
+    private HashSet<int> _assigned = [];
+    private int _workflowId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workflows = await Builder.GetWorkflowsAsync();
+        _staff = await StaffService.GetStaffAsync();
+    }
+
+    private async Task LoadAssignmentsAsync()
+    {
+        _assigned = _workflowId > 0
+            ? await Assignments.GetAssignedStaffNumbersAsync(_workflowId)
+            : [];
+    }
+
+    private async Task ToggleAsync(int staffNumber, ChangeEventArgs e)
+    {
+        var assigned = e.Value is true;
+        await Assignments.SetAssignmentAsync(_workflowId, staffNumber, assigned);
+        if (assigned)
+        {
+            _assigned.Add(staffNumber);
+        }
+        else
+        {
+            _assigned.Remove(staffNumber);
+        }
+    }
+
+    private static string LevelLabel(int? testingPower) => testingPower switch
+    {
+        3 => "Manager",
+        2 => "Advanced",
+        _ => "Staff",
+    };
+}

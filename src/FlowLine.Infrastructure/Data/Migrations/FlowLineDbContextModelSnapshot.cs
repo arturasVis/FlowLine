@@ -17,6 +17,90 @@ namespace FlowLine.Infrastructure.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.28");
 
+            modelBuilder.Entity("FlowLine.Domain.Entities.External.HistoryRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("ID");
+
+                    b.Property<int?>("AssigneeNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("Assigne Number");
+
+                    b.Property<string>("Channel")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("Channel");
+
+                    b.Property<DateTime>("Date")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("Date");
+
+                    b.Property<bool>("IsTested")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("IsTested");
+
+                    b.Property<string>("OrderId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("OrderId");
+
+                    b.Property<string>("PackedBy")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("PackedBy");
+
+                    b.Property<DateTime?>("PackedDate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("PackedDate");
+
+                    b.Property<int>("Qty")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("QTY");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("SKU");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("Status");
+
+                    b.Property<string>("TestedBy")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("TestedBy");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("History", null, t =>
+                        {
+                            t.ExcludeFromMigrations();
+                        });
+                });
+
+            modelBuilder.Entity("FlowLine.Domain.Entities.External.StaffMember", b =>
+                {
+                    b.Property<int>("StaffNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("Staff number");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("Name");
+
+                    b.Property<int?>("TestingPower")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("Testing Power");
+
+                    b.HasKey("StaffNumber");
+
+                    b.ToTable("Staff_Table", null, t =>
+                        {
+                            t.ExcludeFromMigrations();
+                        });
+                });
+
             modelBuilder.Entity("FlowLine.Domain.Entities.MediaAsset", b =>
                 {
                     b.Property<int>("Id")
@@ -161,6 +245,9 @@ namespace FlowLine.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PrebuildId")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("INTEGER");
 
@@ -208,9 +295,32 @@ namespace FlowLine.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("RequiresPrebuild")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.ToTable("Workflows");
+                });
+
+            modelBuilder.Entity("FlowLine.Domain.Entities.WorkflowAssignment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("StaffNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WorkflowId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkflowId", "StaffNumber")
+                        .IsUnique();
+
+                    b.ToTable("WorkflowAssignments");
                 });
 
             modelBuilder.Entity("FlowLine.Domain.Entities.MediaAsset", b =>
@@ -309,6 +419,17 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.Navigation("Workflow");
                 });
 
+            modelBuilder.Entity("FlowLine.Domain.Entities.WorkflowAssignment", b =>
+                {
+                    b.HasOne("FlowLine.Domain.Entities.Workflow", "Workflow")
+                        .WithMany("Assignments")
+                        .HasForeignKey("WorkflowId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Workflow");
+                });
+
             modelBuilder.Entity("FlowLine.Domain.Entities.Stage", b =>
                 {
                     b.Navigation("CurrentWorkItems");
@@ -339,6 +460,8 @@ namespace FlowLine.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("FlowLine.Domain.Entities.Workflow", b =>
                 {
+                    b.Navigation("Assignments");
+
                     b.Navigation("Stages");
 
                     b.Navigation("WorkItems");

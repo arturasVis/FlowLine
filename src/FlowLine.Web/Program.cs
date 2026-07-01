@@ -1,10 +1,15 @@
+using System.Security.Claims;
+using FlowLine.Application.Assignments;
 using FlowLine.Application.Builder;
 using FlowLine.Application.Orders;
 using FlowLine.Application.Relay;
+using FlowLine.Application.Staff;
 using FlowLine.Application.Stations;
 using FlowLine.Application.Timing;
 using FlowLine.Infrastructure.Data;
 using FlowLine.Web.Components;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -12,6 +17,25 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+// Auth: cookie-based, staff-code-only login (PRD §4 allowed a stubbed auth; this is the
+// explicit richer version the company asked for). Level comes from Staff_Table."Testing Power".
+builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/login";
+        options.AccessDeniedPath = "/login";
+        options.ExpireTimeSpan = TimeSpan.FromHours(12);
+        options.SlidingExpiration = true;
+    });
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(FlowLinePolicies.CanViewReports, p => p.RequireAssertion(ctx =>
+        int.TryParse(ctx.User.FindFirst(FlowLineClaims.Level)?.Value, out var l) && l >= AccessLevel.Advanced));
+    options.AddPolicy(FlowLinePolicies.CanManage, p => p.RequireAssertion(ctx =>
+        int.TryParse(ctx.User.FindFirst(FlowLineClaims.Level)?.Value, out var l) && l >= AccessLevel.Manager));
+});
 
 // Provider is config-driven (NFR-2/NFR-3): SQLite for zero-friction local dev, SQL Server for
 // the company deployment. Switching is a config change (DatabaseProvider + connection string),
@@ -54,6 +78,8 @@ builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IOrderImportService, OrderImportService>();
 builder.Services.AddScoped<ITimingService, TimingService>();
 builder.Services.AddScoped<IStationService, StationService>();
+builder.Services.AddScoped<IStaffService, StaffService>();
+builder.Services.AddScoped<IAssignmentService, AssignmentService>();
 
 var app = builder.Build();
 
@@ -75,7 +101,39 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseStaticFiles();
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseAntiforgery();
+
+// Login/logout run OUTSIDE the Blazor circuit: a live SignalR circuit can't set the auth
+// cookie (the HTTP response is already flushed), so the static login form (Login.razor) posts
+// here. Antiforgery is disabled on these two anonymous endpoints to keep the form a plain POST.
+app.MapPost("/auth/login", async (HttpContext http, IStaffService staff) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var member = await staff.GetByCodeAsync(form["code"].ToString());
+    if (member is null)
+    {
+        return Results.Redirect("/login?error=1");
+    }
+
+    var level = AccessLevel.Normalize(member.TestingPower);
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.NameIdentifier, member.StaffNumber.ToString()),
+        new(ClaimTypes.Name, member.Name),
+        new(FlowLineClaims.Level, level.ToString()),
+    };
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    return Results.Redirect("/");
+}).AllowAnonymous().DisableAntiforgery();
+
+app.MapPost("/auth/logout", async (HttpContext http) =>
+{
+    await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Redirect("/login");
+}).DisableAntiforgery();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

@@ -1,5 +1,6 @@
 @page "/admin/orders"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IOrderService OrderService
 @inject IWorkflowBuilderService Builder
 

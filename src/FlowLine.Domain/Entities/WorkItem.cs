@@ -35,6 +35,13 @@ public class WorkItem : IConcurrencyAware
     public int? ClaimedByStationId { get; set; }
     public Station? ClaimedByStation { get; set; }
 
+    /// <summary>
+    /// The prebuild/premade-SKU identifier scanned at the first step (matches a History OrderId),
+    /// or null if none scanned yet / the workflow doesn't require one. Set once and then visible at
+    /// every station this unit passes through. See <see cref="Workflow.RequiresPrebuild"/>.
+    /// </summary>
+    public string? PrebuildId { get; set; }
+
     public Guid RowVersion { get; set; } = Guid.NewGuid();
 
     public List<StepCompletion> StepCompletions { get; set; } = [];

@@ -1,4 +1,5 @@
 using FlowLine.Domain.Entities;
+using FlowLine.Domain.Entities.External;
 using FlowLine.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -156,5 +157,37 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             .SingleOrDefaultAsync(
                 wi => wi.ClaimedByStationId == stationId && wi.Status == WorkItemStatus.InProgress,
                 cancellationToken);
+    }
+
+    public async Task SetPrebuildAsync(int workItemId, int stationId, string prebuildId, CancellationToken cancellationToken = default)
+    {
+        prebuildId = prebuildId?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(prebuildId))
+        {
+            throw new RelayOperationException("Enter a prebuild ID.");
+        }
+
+        var workItem = await db.WorkItems.FirstOrDefaultAsync(wi => wi.Id == workItemId, cancellationToken)
+            ?? throw new RelayOperationException($"WorkItem {workItemId} does not exist.");
+
+        // Only the station that currently holds the unit can attach its prebuild (mirrors AdvanceAsync).
+        if (workItem.ClaimedByStationId != stationId)
+        {
+            throw new RelayOperationException("This unit isn't claimed by this station.");
+        }
+
+        var exists = await db.History.AnyAsync(h => h.OrderId == prebuildId, cancellationToken);
+        if (!exists)
+        {
+            throw new RelayOperationException($"No prebuild found in History for '{prebuildId}'.");
+        }
+
+        workItem.PrebuildId = prebuildId;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<HistoryRecord?> GetPrebuildInfoAsync(string prebuildId, CancellationToken cancellationToken = default)
+    {
+        return db.History.FirstOrDefaultAsync(h => h.OrderId == prebuildId, cancellationToken);
     }
 }

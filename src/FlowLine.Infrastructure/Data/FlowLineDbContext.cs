@@ -13,6 +13,7 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
     public DbSet<Station> Stations => Set<Station>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<StepCompletion> StepCompletions => Set<StepCompletion>();
+    public DbSet<WorkflowAssignment> WorkflowAssignments => Set<WorkflowAssignment>();
 
     // Company-owned, pre-existing tables (SQL Server deployment only). Mapped read-only and
     // excluded from migrations — see ConfigureExternalTables below and the entity XML docs.
@@ -95,6 +96,17 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
         modelBuilder.Entity<WorkItem>()
             .Property(wi => wi.RowVersion)
             .IsConcurrencyToken();
+
+        // Workflow-to-staff assignment (FlowLine-owned). Deleting a workflow removes its
+        // assignments; a workflow can't be assigned to the same staff number twice.
+        modelBuilder.Entity<WorkflowAssignment>()
+            .HasOne(a => a.Workflow)
+            .WithMany(w => w.Assignments)
+            .HasForeignKey(a => a.WorkflowId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<WorkflowAssignment>()
+            .HasIndex(a => new { a.WorkflowId, a.StaffNumber })
+            .IsUnique();
 
         ConfigureExternalTables(modelBuilder);
     }

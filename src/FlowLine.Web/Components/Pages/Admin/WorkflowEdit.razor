@@ -1,5 +1,6 @@
 @page "/admin/workflows/{WorkflowId:int}"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IWorkflowBuilderService Builder
 
 <PageTitle>@(_workflow?.Name ?? "Workflow") — Admin</PageTitle>
@@ -23,6 +24,11 @@ else
             <button @onclick="SaveWorkflowAsync">Save</button>
             <span class="status-badge">@(_workflow.IsActive ? "Active" : "Archived")</span>
         </div>
+
+        <label class="prebuild-toggle">
+            <input type="checkbox" checked="@_workflow.RequiresPrebuild" @onchange="TogglePrebuildAsync" />
+            Requires a prebuild ID scanned at step 1
+        </label>
 
         @if (_error is not null)
         {
@@ -112,6 +118,12 @@ else
 
     private Task SaveWorkflowAsync() =>
         RunAsync(() => Builder.UpdateWorkflowAsync(_workflow!.Id, _workflow.Name, _workflow.Description));
+
+    private async Task TogglePrebuildAsync(ChangeEventArgs e)
+    {
+        _workflow!.RequiresPrebuild = e.Value is true;
+        await RunAsync(() => Builder.SetWorkflowRequiresPrebuildAsync(_workflow.Id, _workflow.RequiresPrebuild));
+    }
 
     private Task SaveStageAsync(Stage stage) =>
         RunAsync(() => Builder.UpdateStageAsync(stage.Id, stage.Name));

@@ -1,0 +1,10 @@
+@inject NavigationManager Navigation
+
+@code {
+    // Rendered by AuthorizeRouteView's <NotAuthorized> when an unauthenticated user hits a gated
+    // page. forceLoad does a full browser navigation so the cookie-auth redirect chain is clean.
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+}

@@ -1,0 +1,70 @@
+@page "/workflow/{WorkflowId:int}"
+@rendermode InteractiveServer
+@inject IRelayService Relay
+@inject IAssignmentService Assignments
+@inject NavigationManager Nav
+
+<PageTitle>@(_workflowName ?? "Workflow") — Stations</PageTitle>
+
+<div class="station-select">
+    <a class="back-link" href="/">← Workflows</a>
+
+    @if (_stations is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <h1>@_workflowName</h1>
+
+        @if (_stations.Count == 0)
+        {
+            <p>This workflow has no stations yet.</p>
+        }
+        else
+        {
+            <ul class="station-list">
+                @foreach (var station in _stations)
+                {
+                    <li>
+                        <a href="@($"/station/{station.Id}")">
+                            <span class="station-name">@station.Name</span>
+                            <span class="station-detail">@station.Stage.Name</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private string? _workflowName;
+    private List<Station>? _stations;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var stations = (await Relay.GetStationsAsync())
+            .Where(s => s.Stage.WorkflowId == WorkflowId)
+            .ToList();
+
+        // URL-guard: a level-1 operator can only open a workflow assigned to them, even by typing
+        // the URL directly — not just by it being hidden from the picker.
+        var user = AuthState is null ? null : (await AuthState).User;
+        if (user is not null && user.GetLevel() <= AccessLevel.Staff)
+        {
+            var assigned = await Assignments.GetAssignedWorkflowIdsAsync(user.GetStaffNumber());
+            if (!assigned.Contains(WorkflowId))
+            {
+                Nav.NavigateTo("/");
+                return;
+            }
+        }
+
+        _workflowName = stations.FirstOrDefault()?.Stage.Workflow.Name;
+        _stations = stations;
+    }
+}

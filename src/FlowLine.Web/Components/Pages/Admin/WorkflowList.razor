@@ -1,5 +1,6 @@
 @page "/admin/workflows"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
 @inject IWorkflowBuilderService Builder
 @inject NavigationManager Nav
 
@@ -8,12 +9,14 @@
 <div class="admin-page">
     <h1>Workflows</h1>
 
-    <div class="new-workflow">
-        <h2>New workflow</h2>
-        <input @bind="_newName" placeholder="Name" />
-        <input @bind="_newDescription" placeholder="Description (optional)" />
-        <button @onclick="CreateAsync" disabled="@string.IsNullOrWhiteSpace(_newName)">Create</button>
-    </div>
+    <AuthorizeView Policy="@FlowLinePolicies.CanManage">
+        <div class="new-workflow">
+            <h2>New workflow</h2>
+            <input @bind="_newName" placeholder="Name" />
+            <input @bind="_newDescription" placeholder="Description (optional)" />
+            <button @onclick="CreateAsync" disabled="@string.IsNullOrWhiteSpace(_newName)">Create</button>
+        </div>
+    </AuthorizeView>
 
     @if (_error is not null)
     {
@@ -45,19 +48,30 @@
                 @foreach (var workflow in _workflows)
                 {
                     <tr>
-                        <td><a href="@($"/admin/workflows/{workflow.Id}")">@workflow.Name</a></td>
+                        <td>
+                            <AuthorizeView Policy="@FlowLinePolicies.CanManage" Context="edit">
+                                <Authorized>
+                                    <a href="@($"/admin/workflows/{workflow.Id}")">@workflow.Name</a>
+                                </Authorized>
+                                <NotAuthorized>
+                                    @workflow.Name
+                                </NotAuthorized>
+                            </AuthorizeView>
+                        </td>
                         <td>@workflow.Description</td>
                         <td>@workflow.Stages.Count</td>
                         <td>@(workflow.IsActive ? "Active" : "Archived")</td>
-                        <td>
-                            <input @bind="_duplicateNames[workflow.Id]" placeholder="@($"{workflow.Name} (Copy)")" />
-                            <button @onclick="() => DuplicateAsync(workflow.Id)">Duplicate</button>
-                        </td>
-                        <td>
-                            <button @onclick="() => ToggleActiveAsync(workflow)">
-                                @(workflow.IsActive ? "Archive" : "Activate")
-                            </button>
-                        </td>
+                        <AuthorizeView Policy="@FlowLinePolicies.CanManage" Context="edit">
+                            <td>
+                                <input @bind="_duplicateNames[workflow.Id]" placeholder="@($"{workflow.Name} (Copy)")" />
+                                <button @onclick="() => DuplicateAsync(workflow.Id)">Duplicate</button>
+                            </td>
+                            <td>
+                                <button @onclick="() => ToggleActiveAsync(workflow)">
+                                    @(workflow.IsActive ? "Archive" : "Activate")
+                                </button>
+                            </td>
+                        </AuthorizeView>
                     </tr>
                 }
             </tbody>

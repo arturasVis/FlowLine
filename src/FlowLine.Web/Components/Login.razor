@@ -1,0 +1,28 @@
+@page "/login"
+@layout Layout.EmptyLayout
+@attribute [AllowAnonymous]
+
+<PageTitle>Sign in — FlowLine</PageTitle>
+
+<div class="login-card">
+    <div class="login-brand"><span class="brand-mark">▚</span> FlowLine</div>
+    <h1>Sign in</h1>
+    <p class="login-hint">Enter your staff code to continue.</p>
+
+    <form method="post" action="/auth/login" class="login-form">
+        <input name="code" type="text" inputmode="numeric" autocomplete="off" autofocus
+               placeholder="Staff code" class="login-input" aria-label="Staff code" />
+        <button type="submit" class="login-button">Sign in</button>
+    </form>
+
+    @if (ErrorFlag is not null)
+    {
+        <p class="error">Unknown staff code — check with your manager.</p>
+    }
+</div>
+
+@code {
+    // Populated when /auth/login redirects back with ?error=1 (works in static SSR).
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? ErrorFlag { get; set; }
+}

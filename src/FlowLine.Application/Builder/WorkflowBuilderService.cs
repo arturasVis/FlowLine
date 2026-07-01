@@ -47,6 +47,14 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task SetWorkflowRequiresPrebuildAsync(int workflowId, bool requiresPrebuild, CancellationToken cancellationToken = default)
+    {
+        var workflow = await db.Workflows.FindAsync([workflowId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Workflow {workflowId} does not exist.");
+        workflow.RequiresPrebuild = requiresPrebuild;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<Workflow> DuplicateWorkflowAsync(int workflowId, string newName, CancellationToken cancellationToken = default)
     {
         var source = await db.Workflows

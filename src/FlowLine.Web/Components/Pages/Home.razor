@@ -1,28 +1,32 @@
 @page "/"
+@rendermode InteractiveServer
 @inject IRelayService Relay
+@inject IAssignmentService Assignments
 
-<PageTitle>FlowLine — Select Station</PageTitle>
+<PageTitle>FlowLine — Select Workflow</PageTitle>
 
 <div class="station-select">
-    <h1>Select your station</h1>
+    <h1>Select a workflow</h1>
 
-    @if (_stations is null)
+    @if (_workflows is null)
     {
         <p>Loading…</p>
     }
-    else if (_stations.Count == 0)
+    else if (_workflows.Count == 0)
     {
-        <p>No stations are configured yet.</p>
+        <p>No workflows are available to you yet. Ask a manager to assign one.</p>
     }
     else
     {
         <ul class="station-list">
-            @foreach (var station in _stations)
+            @foreach (var item in _workflows)
             {
                 <li>
-                    <a href="@($"/station/{station.Id}")">
-                        <span class="station-name">@station.Name</span>
-                        <span class="station-detail">@station.Stage.Workflow.Name — @station.Stage.Name</span>
+                    <a href="@($"/workflow/{item.Workflow.Id}")">
+                        <span class="station-name">@item.Workflow.Name</span>
+                        <span class="station-detail">
+                            @item.StationCount station@(item.StationCount == 1 ? "" : "s")@(item.Workflow.RequiresPrebuild ? " · prebuild required" : "")
+                        </span>
                     </a>
                 </li>
             }
@@ -31,10 +35,32 @@
 </div>
 
 @code {
-    private List<Station>? _stations;
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private List<(Workflow Workflow, int StationCount)>? _workflows;
 
     protected override async Task OnInitializedAsync()
     {
-        _stations = await Relay.GetStationsAsync();
+        var stations = await Relay.GetStationsAsync();
+
+        // A workflow is runnable if it's active and has at least one station. Group the loaded
+        // stations by their workflow to build the pick-list (identity resolution gives one
+        // Workflow instance per id, so grouping by the reference is safe).
+        var byWorkflow = stations
+            .Where(s => s.Stage.Workflow.IsActive)
+            .GroupBy(s => s.Stage.Workflow)
+            .Select(g => (Workflow: g.Key, StationCount: g.Count()))
+            .OrderBy(x => x.Workflow.Name)
+            .ToList();
+
+        // Level-1 staff only see workflows assigned to them; level 2/3 see all.
+        var user = AuthState is null ? null : (await AuthState).User;
+        if (user is not null && user.GetLevel() <= AccessLevel.Staff)
+        {
+            var assigned = await Assignments.GetAssignedWorkflowIdsAsync(user.GetStaffNumber());
+            byWorkflow = byWorkflow.Where(x => assigned.Contains(x.Workflow.Id)).ToList();
+        }
+
+        _workflows = byWorkflow;
     }
 }

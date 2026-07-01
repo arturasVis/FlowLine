@@ -1,6 +1,23 @@
-﻿<Router AppAssembly="typeof(Program).Assembly">
+<Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+            <NotAuthorized>
+                @* Distinguish "not signed in" (send to login) from "signed in but lacks the
+                   level for this page" (show a message rather than bouncing to the login form). *@
+                <AuthorizeView Context="auth">
+                    <Authorized>
+                        <div class="admin-page">
+                            <h1>No access</h1>
+                            <p>Your account doesn't have permission to open this page. Ask a manager if you think you should.</p>
+                            <a href="/">← Back to stations</a>
+                        </div>
+                    </Authorized>
+                    <NotAuthorized>
+                        <RedirectToLogin />
+                    </NotAuthorized>
+                </AuthorizeView>
+            </NotAuthorized>
+        </AuthorizeRouteView>
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
 </Router>

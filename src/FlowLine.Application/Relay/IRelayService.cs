@@ -1,4 +1,5 @@
 using FlowLine.Domain.Entities;
+using FlowLine.Domain.Entities.External;
 
 namespace FlowLine.Application.Relay;
 
@@ -43,4 +44,15 @@ public interface IRelayService
     /// loaded, or null if the station has nothing claimed (e.g. after a page reload mid-stage).
     /// </summary>
     Task<WorkItem?> GetActiveWorkItemAsync(int stationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records the prebuild ID scanned at the first step of a prebuild-requiring workflow. Fails
+    /// with <see cref="RelayOperationException"/> if the station doesn't hold the unit's claim, or
+    /// if the ID doesn't match any company History row. Once set it rides on the WorkItem to every
+    /// downstream station.
+    /// </summary>
+    Task SetPrebuildAsync(int workItemId, int stationId, string prebuildId, CancellationToken cancellationToken = default);
+
+    /// <summary>The company History row for a scanned prebuild ID (matched on OrderId), or null.</summary>
+    Task<HistoryRecord?> GetPrebuildInfoAsync(string prebuildId, CancellationToken cancellationToken = default);
 }

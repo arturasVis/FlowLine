@@ -1,0 +1,4 @@
+@* Every routable page under Pages/ requires an authenticated staff member. Login.razor lives
+   OUTSIDE this folder (Components/Login.razor) so it stays anonymous — [AllowAnonymous] does NOT
+   override [Authorize] in AuthorizeRouteView, so exclusion is by location, not attribute. *@
+@attribute [Authorize]

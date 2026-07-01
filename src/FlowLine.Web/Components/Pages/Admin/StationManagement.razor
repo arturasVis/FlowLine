@@ -1,5 +1,6 @@
 @page "/admin/stations"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IStationService StationService
 @inject IWorkflowBuilderService Builder
 

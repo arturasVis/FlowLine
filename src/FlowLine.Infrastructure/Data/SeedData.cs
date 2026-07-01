@@ -12,6 +12,11 @@ public static class SeedData
 {
     public static async Task SeedAsync(FlowLineDbContext context)
     {
+        // On SQLite dev the company-owned Staff_Table/History don't exist (they're
+        // ExcludeFromMigrations, and live only in the real SQL Server). Seed mock copies so
+        // login, roles, import, and prebuild scanning are all exercisable locally.
+        await SeedDevExternalTablesAsync(context);
+
         if (await context.Workflows.AnyAsync())
         {
             return;
@@ -71,6 +76,73 @@ public static class SeedData
             NewWorkItem(workflow, firstStage, "ORD-1002", "GPU-RTX4060-STD", now.AddMinutes(1)),
             NewWorkItem(workflow, firstStage, "ORD-1003", "GPU-RTX4070-OC", now.AddMinutes(2)));
         await context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// SQLite-only: creates and seeds mock <c>Staff_Table</c> and <c>History</c> (the tables the
+    /// real deployment reads from the company SQL Server). Idempotent — CREATE TABLE IF NOT EXISTS
+    /// plus insert-only-when-empty. Column names match the HasColumnName mapping in
+    /// FlowLineDbContext (spaces included). No-ops on SQL Server, where the real tables exist.
+    /// </summary>
+    private static async Task SeedDevExternalTablesAsync(FlowLineDbContext context)
+    {
+        if (!context.Database.IsSqlite())
+        {
+            return;
+        }
+
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "Staff_Table" (
+                "Staff number" INTEGER NOT NULL PRIMARY KEY,
+                "Name" TEXT NOT NULL,
+                "Testing Power" INTEGER NULL
+            );
+            """);
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "History" (
+                "ID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                "OrderId" TEXT NOT NULL,
+                "SKU" TEXT NOT NULL,
+                "QTY" INTEGER NOT NULL,
+                "Channel" TEXT NULL,
+                "Date" TEXT NOT NULL,
+                "IsTested" INTEGER NOT NULL,
+                "TestedBy" TEXT NULL,
+                "Status" TEXT NULL,
+                "PackedBy" TEXT NULL,
+                "PackedDate" TEXT NULL,
+                "Assigne Number" INTEGER NULL
+            );
+            """);
+
+        if (!await context.Staff.AnyAsync())
+        {
+            await context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO "Staff_Table" ("Staff number", "Name", "Testing Power") VALUES
+                    (1001, 'Alex Assembler', 1),
+                    (1002, 'Bailey Bench', 2),
+                    (1003, 'Morgan Manager', 3),
+                    (1004, 'Sam Solderer', 1);
+                """);
+        }
+
+        if (!await context.History.AnyAsync())
+        {
+            // A mix of importable orders (ORD-####) and scannable prebuilds (PB-####). The scanned
+            // prebuild ID matches History.OrderId. Dates are ISO strings (SQLite stores DateTime as text).
+            await context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO "History" ("OrderId", "SKU", "QTY", "Channel", "Date", "IsTested", "Status", "Assigne Number") VALUES
+                    ('ORD-2001', 'CPU-RYZEN-9950X', 2, 'eBay',     '2026-07-01 08:15:00', 0, 'Pending', 1001),
+                    ('ORD-2002', 'RAM-DDR5-32GB',   4, 'Shopify',  '2026-07-01 09:30:00', 0, 'Pending', 1002),
+                    ('ORD-2003', 'SSD-NVME-2TB',    1, 'Amazon',   '2026-07-01 10:45:00', 0, 'Pending', 1004),
+                    ('PB-5001',  'GPU-RTX4070-PREBUILT', 1, NULL,  '2026-06-29 12:00:00', 1, 'Prebuilt', NULL),
+                    ('PB-5002',  'AIO-RADIATOR-360-ASSY', 1, NULL, '2026-06-29 13:20:00', 1, 'Prebuilt', NULL);
+                """);
+        }
     }
 
     private static WorkItem NewWorkItem(Workflow workflow, Stage firstStage, string orderNumber, string sku, DateTime queuedAtUtc) =>

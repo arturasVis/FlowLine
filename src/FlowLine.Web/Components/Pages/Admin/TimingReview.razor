@@ -1,5 +1,6 @@
 @page "/admin/timing"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
 @inject ITimingService Timing
 
 <PageTitle>Timing Review — Admin</PageTitle>
