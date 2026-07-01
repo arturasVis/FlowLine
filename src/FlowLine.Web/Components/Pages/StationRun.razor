@@ -33,7 +33,8 @@ else
                 <div class="prebuild-scan">
                     <p>Scan or enter a prebuild ID to start a new unit.</p>
                     <input @ref="_prebuildInput" @bind="_prebuildEntry" @bind:event="oninput"
-                           placeholder="Prebuild ID" @onkeydown="HandlePrebuildKey" />
+                           placeholder="Prebuild ID"
+                           @onkeydown="HandlePrebuildKey" @onkeydown:stopPropagation="true" />
                     <button @onclick="StartFromPrebuildAsync" disabled="@(_advancing || string.IsNullOrWhiteSpace(_prebuildEntry))">
                         Start build
                     </button>
