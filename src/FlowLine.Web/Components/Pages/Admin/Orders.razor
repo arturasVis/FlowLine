@@ -56,13 +56,17 @@
                 @foreach (var workItem in _workItems)
                 {
                     <tr>
-                        <td>@workItem.OrderNumber</td>
-                        <td>@workItem.Sku</td>
+                        <td><span class="mono">@workItem.OrderNumber</span></td>
+                        <td><span class="mono">@workItem.Sku</span></td>
                         <td>@workItem.Quantity</td>
                         <td>@workItem.Channel</td>
                         <td>@workItem.Workflow.Name</td>
                         <td>@workItem.CurrentStage.Name</td>
-                        <td>@workItem.Status</td>
+                        <td>
+                            <span class="status-pill @StatusClass(workItem.Status)">
+                                <span class="status-dot"></span>@StatusLabel(workItem.Status)
+                            </span>
+                        </td>
                         <td>@(workItem.ClaimedByStation?.Name ?? "—")</td>
                     </tr>
                 }
@@ -83,6 +87,20 @@
 
     private bool CanCreate =>
         _workflowId > 0 && !string.IsNullOrWhiteSpace(_orderNumber) && !string.IsNullOrWhiteSpace(_sku) && _quantity > 0;
+
+    private static string StatusClass(WorkItemStatus status) => status switch
+    {
+        WorkItemStatus.Queued => "is-queued",
+        WorkItemStatus.InProgress => "is-progress",
+        WorkItemStatus.Completed => "is-done",
+        _ => "",
+    };
+
+    private static string StatusLabel(WorkItemStatus status) => status switch
+    {
+        WorkItemStatus.InProgress => "In progress",
+        _ => status.ToString(),
+    };
 
     protected override async Task OnInitializedAsync()
     {

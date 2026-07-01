@@ -5,8 +5,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
-    <link rel="stylesheet" href="app.css" />
-    <link rel="stylesheet" href="FlowLine.Web.styles.css" />
+    <link rel="stylesheet" href="app.css?v=@AssetVersion" />
+    <link rel="stylesheet" href="FlowLine.Web.styles.css?v=@AssetVersion" />
     <HeadOutlet />
 </head>
 
@@ -16,3 +16,9 @@
 </body>
 
 </html>
+
+@code {
+    // Bumped once per process start so a browser never serves a stale app.css/scoped
+    // bundle after a redeploy or restart — the cause of "icons rendered at intrinsic size".
+    private static readonly string AssetVersion = Guid.NewGuid().ToString("N")[..8];
+}

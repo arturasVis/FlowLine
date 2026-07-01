@@ -62,7 +62,7 @@
                         <td>@station.Stage.Name</td>
                         <td>
                             <button @onclick="() => SaveAsync(station)">Save</button>
-                            <button @onclick="() => DeleteAsync(station)">Delete</button>
+                            <button class="danger" @onclick="() => DeleteAsync(station)">Delete</button>
                         </td>
                     </tr>
                 }
