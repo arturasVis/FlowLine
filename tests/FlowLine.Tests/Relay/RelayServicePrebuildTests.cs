@@ -9,71 +9,95 @@ namespace FlowLine.Tests.Relay;
 
 public class RelayServicePrebuildTests
 {
-    private static async Task<(RelayFixtureContext Fixture, WorkItem Claimed)> SeedClaimedWithHistoryAsync(FlowLineDbContext db)
+    private static async Task<RelayFixtureContext> SeedWithHistoryAsync(FlowLineDbContext db)
     {
         await SqliteTestDatabase.CreateExternalTablesAsync(db);
         var fixture = await RelayTestFixture.SeedAsync(db);
-
-        db.History.Add(new HistoryRecord { OrderId = "PB-5001", Sku = "GPU-PREBUILT", Qty = 1, Date = DateTime.UtcNow });
-        db.WorkItems.Add(RelayTestFixture.NewQueuedWorkItem(fixture.Workflow, fixture.StageA, DateTime.UtcNow));
+        db.History.Add(new HistoryRecord
+        {
+            OrderId = "PB-5001", Sku = "GPU-PREBUILT", Qty = 3, Channel = "Internal", Date = DateTime.UtcNow,
+        });
         await db.SaveChangesAsync();
-
-        var relay = new RelayService(db, new RelayNotifier());
-        var claimed = await relay.ClaimNextAsync(fixture.StationA1.Id);
-        return (fixture, claimed!);
+        return fixture;
     }
 
     [Fact]
-    public async Task SetPrebuild_ValidId_StoresOnWorkItem()
+    public async Task CreateFromPrebuild_ValidId_CreatesClaimedWorkItemFromHistory()
     {
         var (connection, options) = SqliteTestDatabase.Create();
         using (connection)
         {
             using var db = new FlowLineDbContext(options);
-            var (fixture, claimed) = await SeedClaimedWithHistoryAsync(db);
+            var fixture = await SeedWithHistoryAsync(db);
             var relay = new RelayService(db, new RelayNotifier());
 
-            await relay.SetPrebuildAsync(claimed.Id, fixture.StationA1.Id, "PB-5001");
+            var created = await relay.CreateFromPrebuildAsync(fixture.StationA1.Id, "PB-5001");
 
-            var reloaded = await db.WorkItems.SingleAsync(wi => wi.Id == claimed.Id);
-            Assert.Equal("PB-5001", reloaded.PrebuildId);
+            // Inherits the History row's SKU/qty/channel, queued into this workflow at stage 1,
+            // claimed and InProgress at the scanning station.
+            Assert.Equal("PB-5001", created.OrderNumber);
+            Assert.Equal("GPU-PREBUILT", created.Sku);
+            Assert.Equal(3, created.Quantity);
+            Assert.Equal("Internal", created.Channel);
+            Assert.Equal(fixture.Workflow.Id, created.WorkflowId);
+            Assert.Equal(fixture.StageA.Id, created.CurrentStageId);
+            Assert.Equal(WorkItemStatus.InProgress, created.Status);
+            Assert.Equal(fixture.StationA1.Id, created.ClaimedByStationId);
 
-            var info = await relay.GetPrebuildInfoAsync("PB-5001");
-            Assert.Equal("GPU-PREBUILT", info!.Sku);
+            var reloaded = await db.WorkItems.SingleAsync(wi => wi.OrderNumber == "PB-5001");
+            Assert.Equal("GPU-PREBUILT", reloaded.Sku);
         }
     }
 
     [Fact]
-    public async Task SetPrebuild_UnknownId_ThrowsAndLeavesWorkItemUnchanged()
+    public async Task CreateFromPrebuild_UnknownId_ThrowsAndCreatesNothing()
     {
         var (connection, options) = SqliteTestDatabase.Create();
         using (connection)
         {
             using var db = new FlowLineDbContext(options);
-            var (fixture, claimed) = await SeedClaimedWithHistoryAsync(db);
+            var fixture = await SeedWithHistoryAsync(db);
             var relay = new RelayService(db, new RelayNotifier());
 
             await Assert.ThrowsAsync<RelayOperationException>(
-                () => relay.SetPrebuildAsync(claimed.Id, fixture.StationA1.Id, "PB-NOPE"));
+                () => relay.CreateFromPrebuildAsync(fixture.StationA1.Id, "PB-NOPE"));
 
-            var reloaded = await db.WorkItems.SingleAsync(wi => wi.Id == claimed.Id);
-            Assert.Null(reloaded.PrebuildId);
+            Assert.Equal(0, await db.WorkItems.CountAsync());
         }
     }
 
     [Fact]
-    public async Task SetPrebuild_StationNotHoldingClaim_Throws()
+    public async Task CreateFromPrebuild_NotFirstStage_Throws()
     {
         var (connection, options) = SqliteTestDatabase.Create();
         using (connection)
         {
             using var db = new FlowLineDbContext(options);
-            var (fixture, claimed) = await SeedClaimedWithHistoryAsync(db);
+            var fixture = await SeedWithHistoryAsync(db);
             var relay = new RelayService(db, new RelayNotifier());
 
-            // StationA2 didn't claim this unit — it can't attach the prebuild.
+            // StationB is on Stage B (second stage) — a prebuild can only start at the first stage.
             await Assert.ThrowsAsync<RelayOperationException>(
-                () => relay.SetPrebuildAsync(claimed.Id, fixture.StationA2.Id, "PB-5001"));
+                () => relay.CreateFromPrebuildAsync(fixture.StationB.Id, "PB-5001"));
+        }
+    }
+
+    [Fact]
+    public async Task CreateFromPrebuild_SamePrebuildTwiceWhileInFlight_Throws()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = new FlowLineDbContext(options);
+            var fixture = await SeedWithHistoryAsync(db);
+            var relay = new RelayService(db, new RelayNotifier());
+
+            await relay.CreateFromPrebuildAsync(fixture.StationA1.Id, "PB-5001");
+
+            await Assert.ThrowsAsync<RelayOperationException>(
+                () => relay.CreateFromPrebuildAsync(fixture.StationA1.Id, "PB-5001"));
+
+            Assert.Equal(1, await db.WorkItems.CountAsync(wi => wi.OrderNumber == "PB-5001"));
         }
     }
 }

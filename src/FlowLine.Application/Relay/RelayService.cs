@@ -134,7 +134,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
     public Task<Station?> GetStationAsync(int stationId, CancellationToken cancellationToken = default)
     {
         return db.Stations
-            .Include(s => s.Stage).ThenInclude(st => st.Workflow)
+            .Include(s => s.Stage).ThenInclude(st => st.Workflow).ThenInclude(w => w.Stages)
             .Include(s => s.Stage).ThenInclude(st => st.Steps).ThenInclude(step => step.MediaAssets)
             .AsSplitQuery()
             .SingleOrDefaultAsync(s => s.Id == stationId, cancellationToken);
@@ -159,7 +159,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
                 cancellationToken);
     }
 
-    public async Task SetPrebuildAsync(int workItemId, int stationId, string prebuildId, CancellationToken cancellationToken = default)
+    public async Task<WorkItem> CreateFromPrebuildAsync(int stationId, string prebuildId, CancellationToken cancellationToken = default)
     {
         prebuildId = prebuildId?.Trim() ?? string.Empty;
         if (string.IsNullOrEmpty(prebuildId))
@@ -167,27 +167,56 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             throw new RelayOperationException("Enter a prebuild ID.");
         }
 
-        var workItem = await db.WorkItems.FirstOrDefaultAsync(wi => wi.Id == workItemId, cancellationToken)
-            ?? throw new RelayOperationException($"WorkItem {workItemId} does not exist.");
+        var station = await db.Stations
+            .Include(s => s.Stage)
+            .FirstOrDefaultAsync(s => s.Id == stationId, cancellationToken)
+            ?? throw new RelayOperationException($"Station {stationId} does not exist.");
 
-        // Only the station that currently holds the unit can attach its prebuild (mirrors AdvanceAsync).
-        if (workItem.ClaimedByStationId != stationId)
+        // A prebuild is scanned to *start* a unit, so this must be the workflow's first stage.
+        var firstStageId = await db.Stages
+            .Where(s => s.WorkflowId == station.Stage.WorkflowId)
+            .OrderBy(s => s.OrderIndex)
+            .Select(s => s.Id)
+            .FirstAsync(cancellationToken);
+        if (station.StageId != firstStageId)
         {
-            throw new RelayOperationException("This unit isn't claimed by this station.");
+            throw new RelayOperationException("A prebuild can only be scanned at the workflow's first station.");
         }
 
-        var exists = await db.History.AnyAsync(h => h.OrderId == prebuildId, cancellationToken);
-        if (!exists)
+        // The scanned ID is a History OrderId; the new WorkItem inherits that row's SKU/qty/channel.
+        var history = await db.History.FirstOrDefaultAsync(h => h.OrderId == prebuildId, cancellationToken)
+            ?? throw new RelayOperationException($"No prebuild found in History for '{prebuildId}'.");
+
+        // Guard against scanning the same prebuild into the line twice while it's still in flight.
+        var alreadyInFlight = await db.WorkItems.AnyAsync(
+            wi => wi.WorkflowId == station.Stage.WorkflowId
+                && wi.OrderNumber == prebuildId
+                && wi.Status != WorkItemStatus.Completed,
+            cancellationToken);
+        if (alreadyInFlight)
         {
-            throw new RelayOperationException($"No prebuild found in History for '{prebuildId}'.");
+            throw new RelayOperationException($"Prebuild '{prebuildId}' is already on this line.");
         }
 
-        workItem.PrebuildId = prebuildId;
+        // Created already claimed and InProgress at the scanning station, so the operator can begin
+        // immediately; it then hands off downstream like any other unit.
+        var now = DateTime.UtcNow;
+        var workItem = new WorkItem
+        {
+            WorkflowId = station.Stage.WorkflowId,
+            CurrentStageId = station.StageId,
+            OrderNumber = history.OrderId,
+            Sku = history.Sku,
+            Quantity = history.Qty,
+            Channel = history.Channel,
+            Status = WorkItemStatus.InProgress,
+            ClaimedByStationId = stationId,
+            QueuedAtUtc = now,
+        };
+        db.WorkItems.Add(workItem);
         await db.SaveChangesAsync(cancellationToken);
-    }
 
-    public Task<HistoryRecord?> GetPrebuildInfoAsync(string prebuildId, CancellationToken cancellationToken = default)
-    {
-        return db.History.FirstOrDefaultAsync(h => h.OrderId == prebuildId, cancellationToken);
+        notifier.NotifyStageChanged(station.StageId);
+        return workItem;
     }
 }
