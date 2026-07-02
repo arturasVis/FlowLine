@@ -1,0 +1,121 @@
+@page "/admin/staff"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
+@inject IStaffService Staff
+
+<PageTitle>Staff — Admin</PageTitle>
+
+<div class="admin-page">
+    <h1>Staff</h1>
+    <p>Who can sign in and what they can do. The 4-digit staff number is the login code; level 1 runs assigned workflows, level 2 also views reports, level 3 manages everything.</p>
+
+    <div class="new-station">
+        <h2>New staff member</h2>
+        <input @bind="_newNumber" type="number" min="1000" max="9999" placeholder="4-digit number" />
+        <input @bind="_newName" placeholder="Name" />
+        <select @bind="_newLevel">
+            <option value="1">1 — Operator</option>
+            <option value="2">2 — Advanced</option>
+            <option value="3">3 — Manager</option>
+        </select>
+        <button @onclick="CreateAsync" disabled="@(!CanCreate)">Create</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+
+    @if (_staff is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_staff.Count == 0)
+    {
+        <p>No staff members yet — create the first one above.</p>
+    }
+    else
+    {
+        <table class="workflow-table">
+            <thead>
+                <tr>
+                    <th>Number</th>
+                    <th>Name</th>
+                    <th>Access level</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var member in _staff)
+                {
+                    <tr>
+                        <td>@member.StaffNumber</td>
+                        <td><input @bind="member.Name" /></td>
+                        <td>
+                            <select @bind="member.TestingPower">
+                                <option value="1">1 — Operator</option>
+                                <option value="2">2 — Advanced</option>
+                                <option value="3">3 — Manager</option>
+                            </select>
+                        </td>
+                        <td><button @onclick="() => SaveAsync(member)">Save</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="hint">Staff can't be deleted — their numbers are referenced by completion history. Drop someone to level 1 and unassign their workflows to lock them out of everything but sign-in.</p>
+    }
+</div>
+
+@code {
+    private List<StaffMember>? _staff;
+    private int? _newNumber;
+    private string _newName = string.Empty;
+    private int _newLevel = 1;
+    private string? _error;
+
+    private bool CanCreate => _newNumber is not null && !string.IsNullOrWhiteSpace(_newName);
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _staff = await Staff.GetStaffAsync();
+        foreach (var member in _staff)
+        {
+            // A null TestingPower means level 1 everywhere else (AccessLevel.Normalize); give
+            // the row's select a concrete value so it doesn't render an empty selection.
+            member.TestingPower = AccessLevel.Normalize(member.TestingPower);
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        try
+        {
+            await Staff.CreateStaffAsync(_newNumber!.Value, _newName, _newLevel);
+            _newNumber = null;
+            _newName = string.Empty;
+            _newLevel = 1;
+            await LoadAsync();
+        }
+        catch (StaffServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SaveAsync(StaffMember member)
+    {
+        _error = null;
+        try
+        {
+            await Staff.UpdateStaffAsync(member.StaffNumber, member.Name, AccessLevel.Normalize(member.TestingPower));
+        }
+        catch (StaffServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

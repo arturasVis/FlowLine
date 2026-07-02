@@ -1,0 +1,15 @@
+@page "/denied"
+
+@* Where the cookie handler's AccessDeniedPath lands a signed-in user who direct-loads a URL
+   above their level. In-app navigations to such pages never get here — they're caught by
+   Routes.razor's NotAuthorized branch, which shows the same message. Lives outside Pages/
+   (like Login.razor) so the folder-wide [Authorize] doesn't gate it, though only signed-in
+   users are ever redirected here. *@
+
+<PageTitle>No access</PageTitle>
+
+<div class="admin-page">
+    <h1>No access</h1>
+    <p>Your account doesn't have permission to open this page. Ask a manager if you think you should.</p>
+    <a href="/">← Back to stations</a>
+</div>

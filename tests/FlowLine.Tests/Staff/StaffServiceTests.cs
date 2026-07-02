@@ -76,4 +76,104 @@ public class StaffServiceTests
     {
         Assert.Equal(expected, AccessLevel.Normalize(testingPower));
     }
+
+    [Fact]
+    public async Task CreateStaff_ValidInput_PersistsAndIsLoginable()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = await NewDbWithStaffAsync(options);
+            var service = new StaffService(db);
+
+            var created = await service.CreateStaffAsync(1005, "  Riley Rookie  ", AccessLevel.Advanced);
+
+            Assert.Equal("Riley Rookie", created.Name); // trimmed
+            Assert.Equal(AccessLevel.Advanced, created.TestingPower);
+
+            // The new number works as a login code straight away.
+            var byCode = await service.GetByCodeAsync("1005");
+            Assert.NotNull(byCode);
+            Assert.Equal("Riley Rookie", byCode.Name);
+        }
+    }
+
+    [Theory]
+    [InlineData(999)]   // too short
+    [InlineData(10000)] // too long
+    public async Task CreateStaff_NonFourDigitNumber_Throws(int staffNumber)
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = await NewDbWithStaffAsync(options);
+            var service = new StaffService(db);
+
+            await Assert.ThrowsAsync<StaffServiceException>(
+                () => service.CreateStaffAsync(staffNumber, "Someone", AccessLevel.Staff));
+        }
+    }
+
+    [Fact]
+    public async Task CreateStaff_TakenNumber_Throws()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = await NewDbWithStaffAsync(options);
+            var service = new StaffService(db);
+
+            await Assert.ThrowsAsync<StaffServiceException>(
+                () => service.CreateStaffAsync(1001, "Impostor", AccessLevel.Staff));
+        }
+    }
+
+    [Theory]
+    [InlineData("  ", AccessLevel.Staff)] // blank name
+    [InlineData("Valid Name", 0)]         // level below range
+    [InlineData("Valid Name", 4)]         // level above range
+    public async Task CreateStaff_BlankNameOrBadLevel_Throws(string name, int level)
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = await NewDbWithStaffAsync(options);
+            var service = new StaffService(db);
+
+            await Assert.ThrowsAsync<StaffServiceException>(
+                () => service.CreateStaffAsync(1005, name, level));
+        }
+    }
+
+    [Fact]
+    public async Task UpdateStaff_RenamesAndChangesLevel()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = await NewDbWithStaffAsync(options);
+            var service = new StaffService(db);
+
+            await service.UpdateStaffAsync(1001, "Alex A. Assembler", AccessLevel.Manager);
+
+            var reloaded = await service.GetByCodeAsync("1001");
+            Assert.NotNull(reloaded);
+            Assert.Equal("Alex A. Assembler", reloaded.Name);
+            Assert.Equal(AccessLevel.Manager, reloaded.TestingPower);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateStaff_UnknownNumber_Throws()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = await NewDbWithStaffAsync(options);
+            var service = new StaffService(db);
+
+            await Assert.ThrowsAsync<StaffServiceException>(
+                () => service.UpdateStaffAsync(9999, "Nobody", AccessLevel.Staff));
+        }
+    }
 }

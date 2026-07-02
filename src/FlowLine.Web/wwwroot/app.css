@@ -698,3 +698,5 @@ h1:focus { outline: none; }
 .delta-even, .delta-none { color: var(--muted); }
 .stat-card.delta-faster .stat-value { color: #15803d; }
 .stat-card.delta-slower .stat-value { color: var(--danger); }
+
+.hint { color: var(--muted); font-size: 0.85rem; margin-top: 0.75rem; }

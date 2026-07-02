@@ -26,7 +26,10 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     .AddCookie(options =>
     {
         options.LoginPath = "/login";
-        options.AccessDeniedPath = "/login";
+        // A signed-in user direct-loading a page above their level is redirected here by
+        // endpoint auth (Routes.razor's NotAuthorized only catches in-app navigations) —
+        // bouncing them to the login form they already passed would just be confusing.
+        options.AccessDeniedPath = "/denied";
         options.ExpireTimeSpan = TimeSpan.FromHours(12);
         options.SlidingExpiration = true;
     });
