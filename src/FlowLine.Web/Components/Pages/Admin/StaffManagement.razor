@@ -2,6 +2,8 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IStaffService Staff
+@inject IAssignmentService Assignments
+@inject IWorkflowBuilderService Builder
 
 <PageTitle>Staff — Admin</PageTitle>
 
@@ -42,6 +44,7 @@
                     <th>Number</th>
                     <th>Name</th>
                     <th>Access level</th>
+                    <th>Assigned workflows</th>
                     <th></th>
                 </tr>
             </thead>
@@ -58,17 +61,54 @@
                                 <option value="3">3 — Manager</option>
                             </select>
                         </td>
+                        <td>
+                            <span class="wf-summary">@AssignmentSummary(member.StaffNumber)</span>
+                            <button class="wf-edit" @onclick="() => ToggleEditor(member.StaffNumber)">
+                                @(_expandedStaff == member.StaffNumber ? "Close" : "Edit")
+                            </button>
+                        </td>
                         <td><button @onclick="() => SaveAsync(member)">Save</button></td>
                     </tr>
+                    @if (_expandedStaff == member.StaffNumber)
+                    {
+                        <tr class="wf-panel-row">
+                            <td colspan="5">
+                                <div class="wf-panel">
+                                    <input class="wf-filter" @bind="_workflowFilter" @bind:event="oninput"
+                                           placeholder="Filter workflows…" />
+                                    <div class="wf-checks">
+                                        @foreach (var workflow in FilteredWorkflows())
+                                        {
+                                            <label>
+                                                <input type="checkbox"
+                                                       checked="@IsAssigned(member.StaffNumber, workflow.Id)"
+                                                       @onchange="e => ToggleAssignmentAsync(workflow.Id, member.StaffNumber, e)" />
+                                                @workflow.Name
+                                            </label>
+                                        }
+                                        @if (!FilteredWorkflows().Any())
+                                        {
+                                            <span class="hint">No workflows match "@_workflowFilter".</span>
+                                        }
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    }
                 }
             </tbody>
         </table>
+        <p class="hint">Assignments only limit level-1 operators' station picker — levels 2 and 3 see every workflow regardless. Checkbox changes save immediately; Save applies name/level edits.</p>
         <p class="hint">Staff can't be deleted — their numbers are referenced by completion history. Drop someone to level 1 and unassign their workflows to lock them out of everything but sign-in.</p>
     }
 </div>
 
 @code {
     private List<StaffMember>? _staff;
+    private List<Workflow>? _workflows;
+    private readonly Dictionary<int, HashSet<int>> _assignedWorkflowIds = [];
+    private int? _expandedStaff;
+    private string _workflowFilter = string.Empty;
     private int? _newNumber;
     private string _newName = string.Empty;
     private int _newLevel = 1;
@@ -76,7 +116,11 @@
 
     private bool CanCreate => _newNumber is not null && !string.IsNullOrWhiteSpace(_newName);
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        _workflows = (await Builder.GetWorkflowsAsync()).Where(w => w.IsActive).ToList();
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {
@@ -86,6 +130,47 @@
             // A null TestingPower means level 1 everywhere else (AccessLevel.Normalize); give
             // the row's select a concrete value so it doesn't render an empty selection.
             member.TestingPower = AccessLevel.Normalize(member.TestingPower);
+            _assignedWorkflowIds[member.StaffNumber] = await Assignments.GetAssignedWorkflowIdsAsync(member.StaffNumber);
+        }
+    }
+
+    private bool IsAssigned(int staffNumber, int workflowId) =>
+        _assignedWorkflowIds.TryGetValue(staffNumber, out var ids) && ids.Contains(workflowId);
+
+    // Compact per-row summary — names when few, a count when many, so the table stays
+    // readable no matter how many workflows exist. The full list lives in the expandable editor.
+    private string AssignmentSummary(int staffNumber)
+    {
+        var names = (_workflows ?? [])
+            .Where(w => IsAssigned(staffNumber, w.Id))
+            .Select(w => w.Name)
+            .ToList();
+        return names.Count switch
+        {
+            0 => "None",
+            <= 2 => string.Join(", ", names),
+            _ => $"{names.Count} workflows",
+        };
+    }
+
+    private void ToggleEditor(int staffNumber)
+    {
+        _expandedStaff = _expandedStaff == staffNumber ? null : staffNumber;
+        _workflowFilter = string.Empty;
+    }
+
+    private IEnumerable<Workflow> FilteredWorkflows() =>
+        (_workflows ?? []).Where(w =>
+            string.IsNullOrWhiteSpace(_workflowFilter)
+            || w.Name.Contains(_workflowFilter.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private async Task ToggleAssignmentAsync(int workflowId, int staffNumber, ChangeEventArgs e)
+    {
+        var assigned = e.Value is bool value && value;
+        await Assignments.SetAssignmentAsync(workflowId, staffNumber, assigned);
+        if (_assignedWorkflowIds.TryGetValue(staffNumber, out var ids))
+        {
+            if (assigned) ids.Add(workflowId); else ids.Remove(workflowId);
         }
     }
 
