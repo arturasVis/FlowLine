@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FlowLine.Application.Assignments;
 using FlowLine.Application.Builder;
+using FlowLine.Application.Line;
 using FlowLine.Application.Orders;
 using FlowLine.Application.Relay;
 using FlowLine.Application.Staff;
@@ -82,6 +83,7 @@ builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IOrderImportService, OrderImportService>();
 builder.Services.AddScoped<ITimingService, TimingService>();
 builder.Services.AddScoped<IStatsService, StatsService>();
+builder.Services.AddScoped<ILineStatusService, LineStatusService>();
 builder.Services.AddScoped<IStationService, StationService>();
 builder.Services.AddScoped<IStaffService, StaffService>();
 builder.Services.AddScoped<IAssignmentService, AssignmentService>();

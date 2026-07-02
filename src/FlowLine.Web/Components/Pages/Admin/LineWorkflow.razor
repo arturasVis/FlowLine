@@ -1,0 +1,112 @@
+@page "/admin/line/{WorkflowId:int}"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
+@implements IDisposable
+@inject ILineStatusService LineStatus
+@inject IRelayNotifier Notifier
+
+<PageTitle>@(_workflow?.WorkflowName ?? "Line") — Live</PageTitle>
+
+<div class="admin-page line-page">
+    @if (_loaded && _workflow is null)
+    {
+        <p>Workflow @WorkflowId isn't runnable (or doesn't exist).</p>
+    }
+    else if (_workflow is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <a class="stats-back" href="/admin/line">← All lines</a>
+        <h1>@_workflow.WorkflowName</h1>
+        <p>Live — updates as units are claimed, handed off, and completed. <span class="live-dot"></span></p>
+
+        <div class="stats-cards">
+            <div class="stat-card">
+                <span class="stat-value">@_workflow.UnitsOnLine</span>
+                <span class="stat-label">On line</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@_workflow.Stages.Sum(s => s.QueueDepth)</span>
+                <span class="stat-label">Queued</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@_workflow.Stages.Sum(s => s.Active.Count)</span>
+                <span class="stat-label">In progress</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@_workflow.CompletedToday</span>
+                <span class="stat-label">Completed today</span>
+            </div>
+        </div>
+
+        <div class="line-stages">
+            @foreach (var stage in _workflow.Stages)
+            {
+                <div class="line-stage">
+                    <div class="line-stage-name">@stage.StageName</div>
+                    <div class="line-queue @(stage.QueueDepth > 0 ? "has-queue" : null)">
+                        @stage.QueueDepth queued
+                    </div>
+                    @if (stage.Active.Count > 0)
+                    {
+                        <div class="line-active">
+                            @foreach (var unit in stage.Active)
+                            {
+                                <div class="line-unit" title="@unit.Sku">
+                                    <span class="line-unit-order">@unit.OrderNumber</span>
+                                    <span class="line-unit-station">@unit.StationName</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="line-idle">@(stage.StationCount == 0 ? "no station" : "idle")</div>
+                    }
+                </div>
+                @if (stage != _workflow.Stages[^1])
+                {
+                    <div class="line-arrow">→</div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+
+    private LineWorkflowStatus? _workflow;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifier.StageChanged += OnStageChanged;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        // The full line query is a handful of rows at LAN scale; picking one workflow out of
+        // it keeps the service surface to a single method.
+        _workflow = (await LineStatus.GetLineStatusAsync()).FirstOrDefault(w => w.WorkflowId == WorkflowId);
+        _loaded = true;
+    }
+
+    private void OnStageChanged(int stageId)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe or the singleton notifier keeps this dead circuit's component alive.
+        Notifier.StageChanged -= OnStageChanged;
+    }
+}

@@ -23,7 +23,7 @@ public class OrderServiceTests
             db.Workflows.Add(workflow);
             await db.SaveChangesAsync();
 
-            var service = new OrderService(db);
+            var service = new OrderService(db, new FlowLine.Application.Relay.RelayNotifier());
 
             var workItem = await service.CreateWorkItemAsync(workflow.Id, "ORD-1", "SKU-1", 2, "Retail");
 
@@ -48,7 +48,7 @@ public class OrderServiceTests
             db.Workflows.Add(workflow);
             await db.SaveChangesAsync();
 
-            var service = new OrderService(db);
+            var service = new OrderService(db, new FlowLine.Application.Relay.RelayNotifier());
 
             await Assert.ThrowsAsync<OrderServiceException>(
                 () => service.CreateWorkItemAsync(workflow.Id, "ORD-1", "SKU-1", 1, null));
@@ -68,7 +68,7 @@ public class OrderServiceTests
             db.Workflows.Add(workflow);
             await db.SaveChangesAsync();
 
-            var service = new OrderService(db);
+            var service = new OrderService(db, new FlowLine.Application.Relay.RelayNotifier());
             var first = await service.CreateWorkItemAsync(workflow.Id, "ORD-1", "SKU-1", 1, null);
             var second = await service.CreateWorkItemAsync(workflow.Id, "ORD-2", "SKU-2", 1, null);
 
@@ -77,6 +77,44 @@ public class OrderServiceTests
             Assert.Equal([second.Id, first.Id], workItems.Select(wi => wi.Id));
             Assert.Equal("RMA Teardown", workItems[0].Workflow.Name);
             Assert.Equal("Inspect", workItems[0].CurrentStage.Name);
+        }
+    }
+
+    [Fact]
+    public async Task CancelWorkItemAsync_QueuedOrInProgress_BecomesCancelledAndUnclaimed()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            using var db = new FlowLineDbContext(options);
+            var workflow = new Workflow { Name = "WF" };
+            var stage = new Stage { Workflow = workflow, Name = "S1", OrderIndex = 0 };
+            workflow.Stages.Add(stage);
+            var station = new Station { Stage = stage, Name = "St1" };
+            db.Workflows.Add(workflow);
+            db.Stations.Add(station);
+            await db.SaveChangesAsync();
+
+            var service = new OrderService(db, new FlowLine.Application.Relay.RelayNotifier());
+            var queued = await service.CreateWorkItemAsync(workflow.Id, "ORD-Q", "SKU", 1, null);
+            var claimed = await service.CreateWorkItemAsync(workflow.Id, "ORD-C", "SKU", 1, null);
+            claimed.Status = WorkItemStatus.InProgress;
+            claimed.ClaimedByStationId = station.Id;
+            claimed.ClaimedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            await service.CancelWorkItemAsync(queued.Id);
+            await service.CancelWorkItemAsync(claimed.Id);
+
+            var q = await db.WorkItems.SingleAsync(wi => wi.Id == queued.Id);
+            var c = await db.WorkItems.SingleAsync(wi => wi.Id == claimed.Id);
+            Assert.Equal(WorkItemStatus.Cancelled, q.Status);
+            Assert.Equal(WorkItemStatus.Cancelled, c.Status);
+            Assert.Null(c.ClaimedByStationId);
+            Assert.Null(c.ClaimedAtUtc);
+
+            // Terminal states can't be cancelled again.
+            await Assert.ThrowsAsync<OrderServiceException>(() => service.CancelWorkItemAsync(queued.Id));
         }
     }
 }

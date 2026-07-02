@@ -78,6 +78,7 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
                     Name = step.Name,
                     Instructions = step.Instructions,
                     OrderIndex = step.OrderIndex,
+                    RequiresScan = step.RequiresScan,
                 };
                 stageClone.Steps.Add(stepClone);
 
@@ -182,12 +183,13 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         return step;
     }
 
-    public async Task UpdateStepAsync(int stepId, string name, string instructions, CancellationToken cancellationToken = default)
+    public async Task UpdateStepAsync(int stepId, string name, string instructions, bool requiresScan, CancellationToken cancellationToken = default)
     {
         var step = await db.Steps.FindAsync([stepId], cancellationToken)
             ?? throw new WorkflowBuilderException($"Step {stepId} does not exist.");
         step.Name = name;
         step.Instructions = instructions;
+        step.RequiresScan = requiresScan;
         await db.SaveChangesAsync(cancellationToken);
     }
 

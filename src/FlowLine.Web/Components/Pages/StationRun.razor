@@ -44,6 +44,13 @@ else
                     }
                 </div>
             }
+            else if (_holdAutoClaim)
+            {
+                <div class="idle">
+                    <p>Unit released. Auto-claim is paused so it isn't grabbed straight back.</p>
+                    <button class="advance" @onclick="ResumeAsync">Resume (Enter)</button>
+                </div>
+            }
             else
             {
                 <div class="idle">
@@ -81,9 +88,57 @@ else
                     }
                 </div>
 
-                <button class="advance" @onclick="AdvanceAsync" disabled="@_advancing">
-                    Advance (Enter)
+                @if (_currentStep.RequiresScan)
+                {
+                    <div class="step-scan">
+                        <p>Scan the unit's order number to complete this step.</p>
+                        <input @ref="_stepScanInput" @bind="_stepScanEntry" @bind:event="oninput"
+                               placeholder="Scan unit…"
+                               @onkeydown="HandleStepScanKey" @onkeydown:stopPropagation="true" />
+                        <button class="advance" @onclick="() => AdvanceAsync()"
+                                disabled="@(_advancing || string.IsNullOrWhiteSpace(_stepScanEntry))">
+                            Verify &amp; advance
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <button class="advance" @onclick="() => AdvanceAsync()" disabled="@_advancing">
+                        Advance (Enter)
+                    </button>
+                }
+            }
+
+            <div class="unit-actions">
+                <button class="unit-action" @onclick="ReleaseAsync" disabled="@_advancing"
+                        title="Put this unit back in the queue (progress is kept) and pause auto-claim">
+                    Release
                 </button>
+                @if (EarlierStages.Count > 0)
+                {
+                    <button class="unit-action" @onclick="() => _showSendBack = !_showSendBack" disabled="@_advancing">
+                        Send back…
+                    </button>
+                }
+                <button class="unit-action scrap" @onclick="ScrapAsync" disabled="@_advancing"
+                        title="Failed and physically junked — removes the unit from the line">
+                    @(_confirmScrap ? "Confirm scrap?" : "Scrap")
+                </button>
+            </div>
+
+            @if (_showSendBack)
+            {
+                <div class="send-back-panel">
+                    <span>Rework from:</span>
+                    <select @bind="_sendBackTargetId">
+                        @foreach (var stage in EarlierStages)
+                        {
+                            <option value="@stage.Id">@stage.Name</option>
+                        }
+                    </select>
+                    <button class="unit-action" @onclick="SendBackAsync" disabled="@_advancing">Send back</button>
+                    <span class="hint">Steps from that stage onward will be redone.</span>
+                </div>
             }
 
             @if (_errorMessage is not null)
@@ -117,6 +172,22 @@ else
     private bool _prebuildInputFocused;
     private bool _focusRootPending;
     private int? _staffNumber;
+    private bool _holdAutoClaim;
+    private bool _showSendBack;
+    private int _sendBackTargetId;
+    private bool _confirmScrap;
+    private string _stepScanEntry = string.Empty;
+    private ElementReference _stepScanInput;
+    private bool _stepScanFocused;
+
+    // Stages before this one, nearest first — the send-back targets.
+    private List<Stage> EarlierStages =>
+        _station is null
+            ? []
+            : _station.Stage.Workflow.Stages
+                .Where(s => s.OrderIndex < _station.Stage.OrderIndex)
+                .OrderByDescending(s => s.OrderIndex)
+                .ToList();
 
     // The first stage of the workflow (lowest OrderIndex) — where a prebuild is scanned to start a unit.
     private bool IsEntryStage =>
@@ -170,6 +241,13 @@ else
             await _prebuildInput.FocusAsync();
         }
 
+        // Same for a scan-required step's verify box.
+        if (_currentStep?.RequiresScan == true && !_stepScanFocused)
+        {
+            _stepScanFocused = true;
+            await _stepScanInput.FocusAsync();
+        }
+
         // After a scan creates the unit, the scan box is gone — hand focus back to the station div
         // so Enter advances steps again.
         if (_focusRootPending)
@@ -189,14 +267,22 @@ else
         _activeWorkItem = await Relay.GetActiveWorkItemAsync(_station.Id);
 
         // A prebuild entry station doesn't auto-claim from a queue — its units come from scans.
-        // Every other station pulls the next queued unit as before.
-        if (_activeWorkItem is null && !(_station.Stage.Workflow.RequiresPrebuild && IsEntryStage))
+        // Every other station pulls the next queued unit as before — unless the operator just
+        // released a unit here (_holdAutoClaim), in which case pausing is the whole point:
+        // without it, this station would win the race and grab the released unit right back.
+        if (_activeWorkItem is null
+            && !_holdAutoClaim
+            && !(_station.Stage.Workflow.RequiresPrebuild && IsEntryStage))
         {
             _activeWorkItem = await Relay.ClaimNextAsync(_station.Id);
         }
 
         _queueDepth = await Relay.GetQueueDepthAsync(_station.StageId);
         _prebuildInputFocused = false;
+        _showSendBack = false;
+        _confirmScrap = false;
+        _stepScanEntry = string.Empty;
+        _stepScanFocused = false;
 
         UpdateCurrentStep();
     }
@@ -220,9 +306,104 @@ else
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter")
+        if (e.Key != "Enter")
+        {
+            return;
+        }
+        if (_activeWorkItem is null && _holdAutoClaim)
+        {
+            await ResumeAsync();
+            return;
+        }
+        if (_currentStep?.RequiresScan == true)
+        {
+            return; // scan-required steps only advance from the scan box
+        }
+        await AdvanceAsync();
+    }
+
+    private async Task HandleStepScanKey(KeyboardEventArgs e)
+    {
+        // Barcode scanners emit the code then an Enter.
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_stepScanEntry))
         {
             await AdvanceAsync();
+        }
+    }
+
+    private async Task ResumeAsync()
+    {
+        _holdAutoClaim = false;
+        await RefreshAsync();
+    }
+
+    private async Task ReleaseAsync()
+    {
+        // Hold BEFORE the service call: releasing notifies this stage, and this component's
+        // own StageChanged handler runs inline during that notify — with the flag not yet set
+        // it would auto-claim the just-released unit straight back.
+        _holdAutoClaim = true;
+        await RunUnitActionAsync(async () =>
+        {
+            try
+            {
+                await Relay.ReleaseAsync(_activeWorkItem!.Id, _station!.Id);
+            }
+            catch
+            {
+                _holdAutoClaim = false;
+                throw;
+            }
+        });
+    }
+
+    private async Task SendBackAsync()
+    {
+        if (_sendBackTargetId == 0)
+        {
+            _sendBackTargetId = EarlierStages.FirstOrDefault()?.Id ?? 0;
+        }
+        var targetId = _sendBackTargetId;
+        await RunUnitActionAsync(() => Relay.SendBackAsync(_activeWorkItem!.Id, _station!.Id, targetId));
+    }
+
+    private async Task ScrapAsync()
+    {
+        // Two-click confirm: scrapping is terminal, and this button lives near Advance.
+        if (!_confirmScrap)
+        {
+            _confirmScrap = true;
+            return;
+        }
+        await RunUnitActionAsync(() => Relay.ScrapAsync(_activeWorkItem!.Id, _station!.Id));
+    }
+
+    private async Task RunUnitActionAsync(Func<Task> action)
+    {
+        if (_advancing || _activeWorkItem is null || _station is null)
+        {
+            return;
+        }
+
+        _advancing = true;
+        _errorMessage = null;
+        try
+        {
+            await action();
+            await RefreshAsync();
+        }
+        catch (RelayOperationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            _errorMessage = "This unit changed elsewhere — refreshed.";
+            await RefreshAsync();
+        }
+        finally
+        {
+            _advancing = false;
         }
     }
 
@@ -276,7 +457,8 @@ else
         _errorMessage = null;
         try
         {
-            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id, _staffNumber);
+            var scanned = _currentStep?.RequiresScan == true ? _stepScanEntry : null;
+            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id, _staffNumber, scanned);
             // Whatever the outcome — more steps left, handed off, or completed — refreshing
             // shows the right next thing: the next step, or this station pulling its next unit.
             await RefreshAsync();
@@ -284,6 +466,9 @@ else
         catch (RelayOperationException ex)
         {
             _errorMessage = ex.Message;
+            // Clear a rejected scan so the next one starts clean, and refocus the box.
+            _stepScanEntry = string.Empty;
+            _stepScanFocused = false;
         }
         catch (DbUpdateConcurrencyException)
         {

@@ -1,0 +1,65 @@
+@page "/admin/line"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
+@implements IDisposable
+@inject ILineStatusService LineStatus
+@inject IRelayNotifier Notifier
+
+<PageTitle>Line Overview</PageTitle>
+
+<div class="admin-page line-page">
+    <h1>Line overview</h1>
+    <p>Live — pick a workflow to watch its line. <span class="live-dot"></span></p>
+
+    @if (_workflows is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_workflows.Count == 0)
+    {
+        <p>No runnable workflows (a workflow needs at least one stage).</p>
+    }
+    else
+    {
+        <div class="line-list">
+            @foreach (var workflow in _workflows)
+            {
+                <a class="line-list-card" href="@($"/admin/line/{workflow.WorkflowId}")">
+                    <span class="line-list-name">@workflow.WorkflowName</span>
+                    <span class="line-list-stats">
+                        <span class="line-total"><strong>@workflow.UnitsOnLine</strong> on line</span>
+                        <span class="line-total"><strong>@workflow.Stages.Sum(s => s.QueueDepth)</strong> queued</span>
+                        <span class="line-total"><strong>@workflow.Stages.Sum(s => s.Active.Count)</strong> in progress</span>
+                        <span class="line-total"><strong>@workflow.CompletedToday</strong> completed today</span>
+                    </span>
+                    <span class="line-list-go">View line →</span>
+                </a>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private List<LineWorkflowStatus>? _workflows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifier.StageChanged += OnStageChanged;
+        _workflows = await LineStatus.GetLineStatusAsync();
+    }
+
+    private void OnStageChanged(int stageId)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            _workflows = await LineStatus.GetLineStatusAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe or the singleton notifier keeps this dead circuit's component alive.
+        Notifier.StageChanged -= OnStageChanged;
+    }
+}

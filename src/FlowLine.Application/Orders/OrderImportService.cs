@@ -1,4 +1,5 @@
 using FlowLine.Application.Orders;
+using FlowLine.Domain.Entities;
 using FlowLine.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,7 +15,10 @@ public class OrderImportService(FlowLineDbContext db, IOrderService orders) : IO
         // Already-imported orders are those whose History.OrderId matches an existing
         // WorkItem.OrderNumber — that mapping is how a History row and its FlowLine WorkItem
         // stay associated without ever writing an "imported" flag back to the company table.
+        // Cancelled/Scrapped items don't block: voiding or scrapping a unit is exactly what
+        // frees its order number to be imported again.
         var existingOrderNumbers = await db.WorkItems
+            .Where(wi => wi.Status != WorkItemStatus.Cancelled && wi.Status != WorkItemStatus.Scrapped)
             .Select(wi => wi.OrderNumber)
             .ToListAsync(cancellationToken);
         var existing = existingOrderNumbers.ToHashSet();
@@ -56,7 +60,9 @@ public class OrderImportService(FlowLineDbContext db, IOrderService orders) : IO
         // Re-read straight from History (not the projection) so an import always reflects current
         // company data, and re-check the dedup so a row imported since the page loaded is skipped.
         var alreadyImported = (await db.WorkItems
-                .Where(wi => requested.Contains(wi.OrderNumber))
+                .Where(wi => requested.Contains(wi.OrderNumber)
+                    && wi.Status != WorkItemStatus.Cancelled
+                    && wi.Status != WorkItemStatus.Scrapped)
                 .Select(wi => wi.OrderNumber)
                 .ToListAsync(cancellationToken))
             .ToHashSet();

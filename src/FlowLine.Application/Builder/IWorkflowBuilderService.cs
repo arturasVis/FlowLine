@@ -50,7 +50,7 @@ public interface IWorkflowBuilderService
     /// <summary>Appends a new Step at the end of the stage.</summary>
     Task<Step> AddStepAsync(int stageId, string name, string instructions, CancellationToken cancellationToken = default);
 
-    Task UpdateStepAsync(int stepId, string name, string instructions, CancellationToken cancellationToken = default);
+    Task UpdateStepAsync(int stepId, string name, string instructions, bool requiresScan, CancellationToken cancellationToken = default);
 
     /// <summary>Throws <see cref="WorkflowBuilderException"/> if the step has recorded StepCompletions.</summary>
     Task DeleteStepAsync(int stepId, CancellationToken cancellationToken = default);

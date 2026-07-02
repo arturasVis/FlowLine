@@ -21,4 +21,12 @@ public interface IOrderService
     /// for the order overview (FR-8: queue and current position of every WorkItem).
     /// </summary>
     Task<List<WorkItem>> GetWorkItemsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Voids a Queued or InProgress WorkItem (admin action, e.g. created by mistake): status
+    /// becomes Cancelled, any claim is cleared, step history is kept. Terminal — the order
+    /// number becomes importable/scannable again. Throws <see cref="OrderServiceException"/>
+    /// for Completed/Cancelled/Scrapped items.
+    /// </summary>
+    Task CancelWorkItemAsync(int workItemId, CancellationToken cancellationToken = default);
 }

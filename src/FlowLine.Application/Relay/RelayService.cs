@@ -47,7 +47,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         }
     }
 
-    public async Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, CancellationToken cancellationToken = default)
+    public async Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, string? scannedCode = null, CancellationToken cancellationToken = default)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -77,14 +77,34 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             ?? throw new RelayOperationException(
                 $"Stage {stage.Id} has no remaining steps for WorkItem {workItemId}.");
 
+        // Enforced here, not just in the UI: a scan-required step is a physical right-unit
+        // check, so the server refuses to advance without the matching order-number scan.
+        if (nextStep.RequiresScan)
+        {
+            var scanned = scannedCode?.Trim() ?? string.Empty;
+            if (scanned.Length == 0)
+            {
+                throw new RelayOperationException("This step requires scanning the unit's order number.");
+            }
+            if (!scanned.Equals(workItem.OrderNumber.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new RelayOperationException(
+                    $"Scanned '{scanned}', but this unit is order '{workItem.OrderNumber}'. Check you have the right unit.");
+            }
+        }
+
         // The step began when the previous step at this stage finished — or, for the stage's
-        // first step, when the claim was taken. QueuedAtUtc is the last-resort fallback for
-        // WorkItems claimed before ClaimedAtUtc existed; it overstates by the queue wait.
+        // first step, when the claim was taken. Taking the LATER of the two matters after a
+        // release/re-claim: the first step worked after resuming began at the new claim, not at
+        // the pre-release completion (else the idle gap would count as work time). QueuedAtUtc
+        // is the last-resort fallback for WorkItems claimed before ClaimedAtUtc existed; it
+        // overstates by the queue wait.
         var stageStepIds = orderedSteps.Select(s => s.Id).ToHashSet();
-        var startedAtUtc = workItem.StepCompletions
+        var lastStageCompletion = workItem.StepCompletions
             .Where(sc => stageStepIds.Contains(sc.StepId))
             .Select(sc => (DateTime?)sc.CompletedAtUtc)
-            .Max() ?? workItem.ClaimedAtUtc ?? workItem.QueuedAtUtc;
+            .Max();
+        var startedAtUtc = Max(lastStageCompletion, workItem.ClaimedAtUtc) ?? workItem.QueuedAtUtc;
 
         db.StepCompletions.Add(new StepCompletion
         {
@@ -134,9 +154,104 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         {
             notifier.NotifyStageChanged(workItem.CurrentStageId);
         }
+        else if (outcome is AdvanceOutcome.Completed)
+        {
+            // Nothing queues anywhere on completion, but the live line overview counts
+            // finished units — give it (and anything else listening) a nudge.
+            notifier.NotifyStageChanged(workItem.CurrentStageId);
+        }
 
         return new AdvanceResult(outcome, workItem, nextStep);
     }
+
+    public async Task ReleaseAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default)
+    {
+        var workItem = await GetClaimedWorkItemAsync(workItemId, stationId, cancellationToken);
+
+        // Back of the current stage's queue, not the front: the whole point of a release is
+        // "someone/something else next" — re-queuing at the front would just hand the same unit
+        // straight back to whichever station refreshes first.
+        workItem.Status = WorkItemStatus.Queued;
+        workItem.ClaimedByStationId = null;
+        workItem.ClaimedAtUtc = null;
+        workItem.QueuedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+
+        notifier.NotifyStageChanged(workItem.CurrentStageId);
+    }
+
+    public async Task SendBackAsync(int workItemId, int stationId, int targetStageId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var workItem = await GetClaimedWorkItemAsync(workItemId, stationId, cancellationToken);
+        await db.Entry(workItem).Reference(wi => wi.CurrentStage).LoadAsync(cancellationToken);
+
+        var targetStage = await db.Stages
+            .FirstOrDefaultAsync(s => s.Id == targetStageId && s.WorkflowId == workItem.WorkflowId, cancellationToken)
+            ?? throw new RelayOperationException("The target stage doesn't belong to this workflow.");
+        if (targetStage.OrderIndex >= workItem.CurrentStage.OrderIndex)
+        {
+            throw new RelayOperationException("A unit can only be sent back to an earlier stage.");
+        }
+
+        // The work from the target stage onward is being redone, so those StepCompletions are
+        // deleted — otherwise AdvanceAsync would see the stages as already done. Earlier stages'
+        // completions (and their timing) are untouched, and the redo writes fresh, later
+        // timestamps, so the timing review's per-stage math stays monotonic and correct.
+        var redoneStepIds = await db.Steps
+            .Where(s => s.Stage.WorkflowId == workItem.WorkflowId && s.Stage.OrderIndex >= targetStage.OrderIndex)
+            .Select(s => s.Id)
+            .ToListAsync(cancellationToken);
+        var redoneCompletions = await db.StepCompletions
+            .Where(sc => sc.WorkItemId == workItem.Id && redoneStepIds.Contains(sc.StepId))
+            .ToListAsync(cancellationToken);
+        db.StepCompletions.RemoveRange(redoneCompletions);
+
+        workItem.CurrentStageId = targetStage.Id;
+        workItem.Status = WorkItemStatus.Queued;
+        workItem.ClaimedByStationId = null;
+        workItem.ClaimedAtUtc = null;
+        workItem.QueuedAtUtc = DateTime.UtcNow;
+
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        notifier.NotifyStageChanged(targetStage.Id);
+    }
+
+    public async Task ScrapAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default)
+    {
+        var workItem = await GetClaimedWorkItemAsync(workItemId, stationId, cancellationToken);
+
+        workItem.Status = WorkItemStatus.Scrapped;
+        workItem.ClaimedByStationId = null;
+        workItem.ClaimedAtUtc = null;
+        await db.SaveChangesAsync(cancellationToken);
+
+        notifier.NotifyStageChanged(workItem.CurrentStageId);
+    }
+
+    /// <summary>Loads an InProgress WorkItem, verifying the caller's station holds its claim (when given).</summary>
+    private async Task<WorkItem> GetClaimedWorkItemAsync(int workItemId, int? stationId, CancellationToken cancellationToken)
+    {
+        var workItem = await db.WorkItems.FindAsync([workItemId], cancellationToken)
+            ?? throw new RelayOperationException($"WorkItem {workItemId} does not exist.");
+        if (workItem.Status != WorkItemStatus.InProgress)
+        {
+            throw new RelayOperationException(
+                $"WorkItem {workItemId} is not in progress (status: {workItem.Status}).");
+        }
+        if (stationId is not null && workItem.ClaimedByStationId != stationId)
+        {
+            throw new RelayOperationException(
+                $"WorkItem {workItemId} is not claimed by station {stationId}.");
+        }
+        return workItem;
+    }
+
+    private static DateTime? Max(DateTime? a, DateTime? b) =>
+        a is null ? b : b is null ? a : (a > b ? a : b);
 
     public Task<int> GetQueueDepthAsync(int stageId, CancellationToken cancellationToken = default)
     {
@@ -204,7 +319,9 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         var existing = await db.WorkItems.FirstOrDefaultAsync(
             wi => wi.WorkflowId == station.Stage.WorkflowId
                 && wi.OrderNumber == prebuildId
-                && wi.Status != WorkItemStatus.Completed,
+                && wi.Status != WorkItemStatus.Completed
+                && wi.Status != WorkItemStatus.Cancelled
+                && wi.Status != WorkItemStatus.Scrapped,
             cancellationToken);
         if (existing is not null)
         {

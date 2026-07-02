@@ -185,6 +185,9 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.Property<int>("OrderIndex")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("RequiresScan")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("StageId")
                         .HasColumnType("INTEGER");
 

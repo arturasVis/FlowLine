@@ -358,4 +358,30 @@ public class WorkflowBuilderServiceTests
             }
         }
     }
+
+    [Fact]
+    public async Task UpdateStepAsync_SetsRequiresScan_AndDuplicateCopiesIt()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            var (service, db, _, cleanup) = CreateService(options);
+            using (cleanup)
+            using (db)
+            {
+                var workflow = await service.CreateWorkflowAsync("WF", null);
+                var stage = await service.AddStageAsync(workflow.Id, "S1");
+                var step = await service.AddStepAsync(stage.Id, "Verify unit", "scan it");
+                Assert.False(step.RequiresScan); // default off
+
+                await service.UpdateStepAsync(step.Id, "Verify unit", "scan it", requiresScan: true);
+                var reloaded = await db.Steps.SingleAsync(s => s.Id == step.Id);
+                Assert.True(reloaded.RequiresScan);
+
+                var copy = await service.DuplicateWorkflowAsync(workflow.Id, "WF Copy");
+                var copiedStep = await db.Steps.SingleAsync(s => s.Stage.WorkflowId == copy.Id);
+                Assert.True(copiedStep.RequiresScan); // deep clone keeps the flag
+            }
+        }
+    }
 }

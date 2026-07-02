@@ -28,7 +28,34 @@ public interface IRelayService
     /// Staff number of the operator completing the step, recorded on the StepCompletion for
     /// timing/attribution reporting. Null if no operator identity is available.
     /// </param>
-    Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, CancellationToken cancellationToken = default);
+    /// <param name="scannedCode">
+    /// The barcode scanned by the operator. Required to match the WorkItem's OrderNumber
+    /// (case-insensitive) when the step being completed has <c>RequiresScan</c>; ignored otherwise.
+    /// </param>
+    Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, string? scannedCode = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases an InProgress WorkItem's claim back to the *end* of its current stage's queue
+    /// (partial step progress is kept; a later claim resumes at the next outstanding step).
+    /// For unsticking a claim — wrong scan, blocked unit, operator gone home. Pass a station
+    /// ID to require that station holds the claim, or null for an admin override.
+    /// </summary>
+    Task ReleaseAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends an InProgress WorkItem back to an earlier stage for rework: deletes the
+    /// StepCompletions of the target stage and every stage after it (that work is being
+    /// redone), re-queues the unit at the target stage, and clears the claim. Earlier stages'
+    /// completions and timing are untouched.
+    /// </summary>
+    Task SendBackAsync(int workItemId, int stationId, int targetStageId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks an InProgress WorkItem as Scrapped (failed and physically junked) and clears the
+    /// claim. Terminal: it leaves the line and is excluded from stats; its order number can be
+    /// scanned or imported again for a rebuild. Null station = admin override.
+    /// </summary>
+    Task ScrapAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default);
 
     /// <summary>Number of WorkItems currently Queued at a stage (FR-15).</summary>
     Task<int> GetQueueDepthAsync(int stageId, CancellationToken cancellationToken = default);

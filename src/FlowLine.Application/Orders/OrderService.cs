@@ -1,11 +1,31 @@
+using FlowLine.Application.Relay;
 using FlowLine.Domain.Entities;
 using FlowLine.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace FlowLine.Application.Orders;
 
-public class OrderService(FlowLineDbContext db) : IOrderService
+public class OrderService(FlowLineDbContext db, IRelayNotifier notifier) : IOrderService
 {
+    public async Task CancelWorkItemAsync(int workItemId, CancellationToken cancellationToken = default)
+    {
+        var workItem = await db.WorkItems.FindAsync([workItemId], cancellationToken)
+            ?? throw new OrderServiceException($"WorkItem {workItemId} does not exist.");
+        if (workItem.Status is not (WorkItemStatus.Queued or WorkItemStatus.InProgress))
+        {
+            throw new OrderServiceException(
+                $"Only queued or in-progress orders can be cancelled (status: {workItem.Status}).");
+        }
+
+        workItem.Status = WorkItemStatus.Cancelled;
+        workItem.ClaimedByStationId = null;
+        workItem.ClaimedAtUtc = null;
+        await db.SaveChangesAsync(cancellationToken);
+
+        // A station holding (or queued behind) this unit should move on without a manual refresh.
+        notifier.NotifyStageChanged(workItem.CurrentStageId);
+    }
+
     public async Task<WorkItem> CreateWorkItemAsync(
         int workflowId, string orderNumber, string sku, int quantity, string? channel,
         CancellationToken cancellationToken = default)

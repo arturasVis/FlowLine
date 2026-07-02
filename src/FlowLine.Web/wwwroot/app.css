@@ -709,3 +709,120 @@ h1:focus { outline: none; }
 /* Wrapping grid so 50+ workflows stay scannable in columns instead of one long list. */
 .wf-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.35rem 1.25rem; }
 .wf-checks label { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; }
+
+/* Secondary unit actions on the station screen — deliberately small and muted next to Advance. */
+.unit-actions { display: flex; gap: 0.5rem; margin-top: 1.25rem; }
+.unit-action {
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.unit-action:hover { color: var(--text); border-color: var(--text); }
+.unit-action.scrap:hover { color: var(--danger); border-color: var(--danger); }
+.send-back-panel {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+.send-back-panel select { padding: 0.3rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 6px; font: inherit; }
+
+.status-pill.is-void { color: var(--muted); }
+.status-pill.is-void .status-dot { background: var(--border-strong); }
+.order-actions { white-space: nowrap; }
+.order-actions .unit-action { margin-right: 0.35rem; }
+
+/* ==========================================================================
+   Live line overview (/admin/line)
+   ========================================================================== */
+
+.line-page .live-dot {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: #22b07d;
+    animation: line-pulse 2s ease-in-out infinite;
+}
+@keyframes line-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.line-card {
+    margin: 1.25rem 0;
+    padding: 1rem 1.25rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.line-card-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.line-card-header h2 { margin: 0 0 0.75rem; font-size: 1.15rem; }
+.line-card-totals { display: flex; gap: 1.25rem; color: var(--muted); font-size: 0.9rem; }
+.line-total strong { color: var(--text); font-size: 1.05rem; }
+
+.line-stages { display: flex; align-items: stretch; gap: 0.5rem; overflow-x: auto; }
+.line-stage {
+    flex: 1 1 0;
+    min-width: 11rem;
+    padding: 0.75rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.line-stage-name { font-weight: 600; font-size: 0.9rem; margin-bottom: 0.4rem; }
+.line-queue { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }
+.line-queue.has-queue { color: var(--accent); font-weight: 600; }
+.line-active { display: flex; flex-direction: column; gap: 0.35rem; }
+.line-unit {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.3rem 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--accent-bright);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+.line-unit-order { font-weight: 600; }
+.line-unit-station { color: var(--muted); }
+.line-idle { color: var(--muted); font-size: 0.85rem; font-style: italic; }
+.line-arrow { align-self: center; color: var(--border-strong); font-size: 1.2rem; }
+
+.scan-flag { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); margin: 0.25rem 0 0.5rem; }
+
+.step-scan { margin-top: 0.75rem; }
+.step-scan p { margin: 0 0 0.5rem; color: var(--muted); }
+.step-scan input {
+    padding: 0.6rem 0.8rem;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 1.05rem;
+    margin-right: 0.5rem;
+}
+
+.line-list { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1.25rem; }
+.line-list-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    text-decoration: none;
+    color: var(--text);
+}
+.line-list-card:hover { border-color: var(--accent); }
+.line-list-name { font-weight: 650; font-size: 1.05rem; }
+.line-list-stats { display: flex; gap: 1.25rem; color: var(--muted); font-size: 0.9rem; flex-wrap: wrap; }
+.line-list-go { color: var(--accent); font-size: 0.9rem; white-space: nowrap; }

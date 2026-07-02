@@ -51,6 +51,9 @@ else
                     <div class="step-card">
                         <input @bind="step.Name" placeholder="Step name" />
                         <textarea @bind="step.Instructions" placeholder="Instructions"></textarea>
+                        <label class="scan-flag" title="The operator must scan the unit's order-number barcode to complete this step">
+                            <input type="checkbox" @bind="step.RequiresScan" /> Requires scanning the unit
+                        </label>
                         <div class="step-card-actions">
                             <button @onclick="() => SaveStepAsync(step)">Save</button>
                             <button @onclick="() => MoveStepAsync(stage, step, -1)" disabled="@(step.OrderIndex == 0)">Move step up</button>
@@ -129,7 +132,7 @@ else
         RunAsync(() => Builder.UpdateStageAsync(stage.Id, stage.Name));
 
     private Task SaveStepAsync(Step step) =>
-        RunAsync(() => Builder.UpdateStepAsync(step.Id, step.Name, step.Instructions));
+        RunAsync(() => Builder.UpdateStepAsync(step.Id, step.Name, step.Instructions, step.RequiresScan));
 
     private async Task AddStageAsync()
     {

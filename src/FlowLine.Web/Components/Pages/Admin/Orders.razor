@@ -4,6 +4,7 @@
 @attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
 @inject IOrderService OrderService
 @inject IWorkflowBuilderService Builder
+@inject IRelayService Relay
 @inject IRelayNotifier Notifier
 
 <PageTitle>Orders — Admin</PageTitle>
@@ -53,6 +54,7 @@
                     <th>Current stage</th>
                     <th>Status</th>
                     <th>Claimed by</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -71,6 +73,20 @@
                             </span>
                         </td>
                         <td>@(workItem.ClaimedByStation?.Name ?? "—")</td>
+                        <td class="order-actions">
+                            @if (workItem.Status == WorkItemStatus.InProgress)
+                            {
+                                <button class="unit-action" title="Free the claim — the unit re-queues at the back of its stage (progress kept)"
+                                        @onclick="() => ReleaseAsync(workItem)">Release</button>
+                            }
+                            @if (workItem.Status is WorkItemStatus.Queued or WorkItemStatus.InProgress)
+                            {
+                                <button class="unit-action scrap" title="Void this order — it leaves the line and can be re-imported/scanned"
+                                        @onclick="() => CancelAsync(workItem)">
+                                    @(_confirmCancelId == workItem.Id ? "Confirm?" : "Cancel")
+                                </button>
+                            }
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -91,11 +107,15 @@
     private bool CanCreate =>
         _workflowId > 0 && !string.IsNullOrWhiteSpace(_orderNumber) && !string.IsNullOrWhiteSpace(_sku) && _quantity > 0;
 
+    private int? _confirmCancelId;
+
     private static string StatusClass(WorkItemStatus status) => status switch
     {
         WorkItemStatus.Queued => "is-queued",
         WorkItemStatus.InProgress => "is-progress",
         WorkItemStatus.Completed => "is-done",
+        WorkItemStatus.Cancelled => "is-void",
+        WorkItemStatus.Scrapped => "is-void",
         _ => "",
     };
 
@@ -104,6 +124,42 @@
         WorkItemStatus.InProgress => "In progress",
         _ => status.ToString(),
     };
+
+    private async Task ReleaseAsync(WorkItem workItem)
+    {
+        _error = null;
+        try
+        {
+            // Null station = admin override: no claim-ownership check.
+            await Relay.ReleaseAsync(workItem.Id, null);
+            await LoadWorkItemsAsync();
+        }
+        catch (RelayOperationException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task CancelAsync(WorkItem workItem)
+    {
+        // Two-click confirm per row — cancelling is terminal.
+        if (_confirmCancelId != workItem.Id)
+        {
+            _confirmCancelId = workItem.Id;
+            return;
+        }
+        _confirmCancelId = null;
+        _error = null;
+        try
+        {
+            await OrderService.CancelWorkItemAsync(workItem.Id);
+            await LoadWorkItemsAsync();
+        }
+        catch (OrderServiceException ex)
+        {
+            _error = ex.Message;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {

@@ -57,7 +57,7 @@ public class OrderImportServiceTests
             });
             await db.SaveChangesAsync();
 
-            var service = new OrderImportService(db, new OrderService(db));
+            var service = new OrderImportService(db, new OrderService(db, new FlowLine.Application.Relay.RelayNotifier()));
             var importable = await service.GetImportableOrdersAsync();
 
             // Newest first, ORD-1001 excluded.
@@ -92,7 +92,7 @@ public class OrderImportServiceTests
             });
             await db.SaveChangesAsync();
 
-            var service = new OrderImportService(db, new OrderService(db));
+            var service = new OrderImportService(db, new OrderService(db, new FlowLine.Application.Relay.RelayNotifier()));
             var count = await service.ImportAsync(workflow.Id, ["ORD-2001", "ORD-2002"]);
 
             Assert.Equal(1, count);
@@ -116,7 +116,7 @@ public class OrderImportServiceTests
             await CreateExternalTablesAsync(db);
             var (workflow, _) = await SeedWorkflowAsync(db);
 
-            var service = new OrderImportService(db, new OrderService(db));
+            var service = new OrderImportService(db, new OrderService(db, new FlowLine.Application.Relay.RelayNotifier()));
             var count = await service.ImportAsync(workflow.Id, []);
 
             Assert.Equal(0, count);
