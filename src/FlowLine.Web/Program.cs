@@ -19,7 +19,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 // Auth: cookie-based, staff-code-only login (PRD §4 allowed a stubbed auth; this is the
-// explicit richer version the company asked for). Level comes from Staff_Table."Testing Power".
+// explicit richer version the company asked for). Level comes from StaffTable."TestingPower".
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

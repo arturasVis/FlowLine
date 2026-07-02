@@ -4,20 +4,20 @@ namespace FlowLine.Application.Orders;
 /// Reads pending orders from the company-owned <c>History</c> table (read-only source) and turns
 /// selected ones into FlowLine WorkItems. Deliberately separate from <see cref="IOrderService"/>:
 /// this is the "import from the company DB" path, only meaningful on the SQL Server deployment
-/// where those external tables exist. It never writes back to History or Staff_Table.
+/// where those external tables exist. It never writes back to History or StaffTable.
 /// </summary>
 public interface IOrderImportService
 {
     /// <summary>
     /// True only when the app is running on the SQL Server deployment, where the company's
-    /// History/Staff_Table tables exist. False under the SQLite dev provider, where the import
+    /// History/StaffTable tables exist. False under the SQLite dev provider, where the import
     /// feature has nothing to read — the UI shows an explanatory message instead of querying.
     /// </summary>
     bool ExternalTablesSupported { get; }
 
     /// <summary>
     /// History rows whose OrderId isn't already a FlowLine WorkItem, newest first, each with its
-    /// assignee name resolved from Staff_Table.
+    /// assignee name resolved from StaffTable.
     /// </summary>
     Task<List<ImportableOrder>> GetImportableOrdersAsync(CancellationToken cancellationToken = default);
 

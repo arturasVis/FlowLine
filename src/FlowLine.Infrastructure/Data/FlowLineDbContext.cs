@@ -1,6 +1,7 @@
 using FlowLine.Domain.Entities;
 using FlowLine.Domain.Entities.External;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace FlowLine.Infrastructure.Data;
 
@@ -113,7 +114,7 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
 
     /// <summary>
     /// Maps the two company-owned tables FlowLine only ever *reads* (History as an order source,
-    /// Staff_Table as a name lookup). Every table/column is named to match the existing schema,
+    /// StaffTable as a name lookup). Every table/column is named to match the existing schema,
     /// and every entity is marked <c>ExcludeFromMigrations()</c> so FlowLine's own migrations
     /// never emit DDL against tables it doesn't own — <c>Database.Migrate()</c> stays responsible
     /// only for FlowLine's seven tables. These tables don't exist under the SQLite dev provider;
@@ -121,33 +122,56 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
     /// </summary>
     private static void ConfigureExternalTables(ModelBuilder modelBuilder)
     {
+        // The real company columns are fixed-width nchar/varchar and hold space-padded values
+        // (e.g. Orderid = '616941                   '). These converters trim the padding on read
+        // so FlowLine works with clean values; the to-provider direction is identity because the
+        // tables are read-only (we never write back). EF skips converters for NULL values.
+        var trim = new ValueConverter<string, string>(v => v, v => v.TrimEnd());
+        var trimNullable = new ValueConverter<string?, string?>(v => v, v => v == null ? null : v.TrimEnd());
+
+        // QTY is stored as nchar (e.g. '20        '), not int. int.TryParse ignores the trailing
+        // whitespace; a blank/non-numeric quantity reads as 0 rather than throwing on the whole query.
+        var ncharToInt = new ValueConverter<int, string>(v => v.ToString(), v => ParseIntOrZero(v));
+
+        // AssignedNumber is varchar and often holds a non-numeric marker like 'Unknown' rather than a
+        // staff number, so parse leniently: anything non-numeric becomes null (no assignee resolved).
+        var stringToNullableInt = new ValueConverter<int?, string?>(
+            v => v == null ? null : v.ToString(),
+            v => ParseNullableInt(v));
+
         modelBuilder.Entity<HistoryRecord>(e =>
         {
             e.ToTable("History", t => t.ExcludeFromMigrations());
             e.HasKey(h => h.Id);
-            e.Property(h => h.Id).HasColumnName("ID");
-            e.Property(h => h.OrderId).HasColumnName("OrderId");
-            e.Property(h => h.Sku).HasColumnName("SKU");
-            e.Property(h => h.Qty).HasColumnName("QTY");
-            e.Property(h => h.Channel).HasColumnName("Channel");
+            e.Property(h => h.Id).HasColumnName("Id");
+            e.Property(h => h.OrderId).HasColumnName("Orderid").HasConversion(trim);
+            e.Property(h => h.Sku).HasColumnName("SKU").HasConversion(trim);
+            e.Property(h => h.Qty).HasColumnName("QTY").HasConversion(ncharToInt);
+            e.Property(h => h.Channel).HasColumnName("Channel").HasConversion(trimNullable);
             e.Property(h => h.Date).HasColumnName("Date");
             e.Property(h => h.IsTested).HasColumnName("IsTested");
-            e.Property(h => h.TestedBy).HasColumnName("TestedBy");
-            e.Property(h => h.Status).HasColumnName("Status");
-            e.Property(h => h.PackedBy).HasColumnName("PackedBy");
+            e.Property(h => h.TestedBy).HasColumnName("TestedBy").HasConversion(trimNullable);
+            e.Property(h => h.Status).HasColumnName("TestStatus").HasConversion(trimNullable);
+            e.Property(h => h.PackedBy).HasColumnName("PackedBy").HasConversion(trimNullable);
             e.Property(h => h.PackedDate).HasColumnName("PackedDate");
-            e.Property(h => h.AssigneeNumber).HasColumnName("Assigne Number");
+            e.Property(h => h.AssigneeNumber).HasColumnName("AssignedNumber").HasConversion(stringToNullableInt);
         });
 
         modelBuilder.Entity<StaffMember>(e =>
         {
-            e.ToTable("Staff_Table", t => t.ExcludeFromMigrations());
+            e.ToTable("StaffTable", t => t.ExcludeFromMigrations());
             e.HasKey(s => s.StaffNumber);
-            e.Property(s => s.StaffNumber).HasColumnName("Staff number").ValueGeneratedNever();
-            e.Property(s => s.Name).HasColumnName("Name");
-            e.Property(s => s.TestingPower).HasColumnName("Testing Power");
+            e.Property(s => s.StaffNumber).HasColumnName("StaffNumber").ValueGeneratedNever();
+            // Name is nchar(50) — space-padded; trim so the logged-in display name has no trailing run.
+            e.Property(s => s.Name).HasColumnName("Name").HasConversion(trim);
+            e.Property(s => s.TestingPower).HasColumnName("TestingPower");
         });
     }
+
+    // Value-converter helpers — kept as methods because expression trees can't declare `out` vars.
+    private static int ParseIntOrZero(string value) => int.TryParse(value, out var n) ? n : 0;
+
+    private static int? ParseNullableInt(string? value) => int.TryParse(value, out var n) ? n : null;
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {

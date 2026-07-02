@@ -22,11 +22,11 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
-                        .HasColumnName("ID");
+                        .HasColumnName("Id");
 
-                    b.Property<int?>("AssigneeNumber")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("Assigne Number");
+                    b.Property<string>("AssigneeNumber")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("AssignedNumber");
 
                     b.Property<string>("Channel")
                         .HasColumnType("TEXT")
@@ -43,7 +43,7 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.Property<string>("OrderId")
                         .IsRequired()
                         .HasColumnType("TEXT")
-                        .HasColumnName("OrderId");
+                        .HasColumnName("Orderid");
 
                     b.Property<string>("PackedBy")
                         .HasColumnType("TEXT")
@@ -53,8 +53,9 @@ namespace FlowLine.Infrastructure.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("PackedDate");
 
-                    b.Property<int>("Qty")
-                        .HasColumnType("INTEGER")
+                    b.Property<string>("Qty")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
                         .HasColumnName("QTY");
 
                     b.Property<string>("Sku")
@@ -64,7 +65,7 @@ namespace FlowLine.Infrastructure.Data.Migrations
 
                     b.Property<string>("Status")
                         .HasColumnType("TEXT")
-                        .HasColumnName("Status");
+                        .HasColumnName("TestStatus");
 
                     b.Property<string>("TestedBy")
                         .HasColumnType("TEXT")
@@ -82,7 +83,7 @@ namespace FlowLine.Infrastructure.Data.Migrations
                 {
                     b.Property<int>("StaffNumber")
                         .HasColumnType("INTEGER")
-                        .HasColumnName("Staff number");
+                        .HasColumnName("StaffNumber");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -91,11 +92,11 @@ namespace FlowLine.Infrastructure.Data.Migrations
 
                     b.Property<int?>("TestingPower")
                         .HasColumnType("INTEGER")
-                        .HasColumnName("Testing Power");
+                        .HasColumnName("TestingPower");
 
                     b.HasKey("StaffNumber");
 
-                    b.ToTable("Staff_Table", null, t =>
+                    b.ToTable("StaffTable", null, t =>
                         {
                             t.ExcludeFromMigrations();
                         });

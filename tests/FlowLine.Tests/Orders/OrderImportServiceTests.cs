@@ -9,38 +9,13 @@ namespace FlowLine.Tests.Orders;
 
 public class OrderImportServiceTests
 {
-    // The company History/Staff_Table tables are ExcludeFromMigrations, so neither EnsureCreated
+    // The company History/StaffTable tables are ExcludeFromMigrations, so neither EnsureCreated
     // nor a migration creates them — production treats them as already existing in the company DB.
-    // Each test creates equivalent SQLite tables (column names matching the HasColumnName mapping,
-    // spaces included) so the read-only import queries have something real to run against.
-    private static async Task CreateExternalTablesAsync(FlowLineDbContext db)
-    {
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE "Staff_Table" (
-                "Staff number" INTEGER NOT NULL PRIMARY KEY,
-                "Name" TEXT NOT NULL,
-                "Testing Power" INTEGER NULL
-            );
-            """);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE "History" (
-                "ID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                "OrderId" TEXT NOT NULL,
-                "SKU" TEXT NOT NULL,
-                "QTY" INTEGER NOT NULL,
-                "Channel" TEXT NULL,
-                "Date" TEXT NOT NULL,
-                "IsTested" INTEGER NOT NULL,
-                "TestedBy" TEXT NULL,
-                "Status" TEXT NULL,
-                "PackedBy" TEXT NULL,
-                "PackedDate" TEXT NULL,
-                "Assigne Number" INTEGER NULL
-            );
-            """);
-    }
+    // Delegates to the shared helper, which builds SQLite stand-ins whose columns mirror the real
+    // company schema (Orderid/TestStatus/AssignedNumber) so the read-only import queries have
+    // something real to run against.
+    private static Task CreateExternalTablesAsync(FlowLineDbContext db) =>
+        SqliteTestDatabase.CreateExternalTablesAsync(db);
 
     private static async Task<(Workflow workflow, Stage firstStage)> SeedWorkflowAsync(FlowLineDbContext db)
     {

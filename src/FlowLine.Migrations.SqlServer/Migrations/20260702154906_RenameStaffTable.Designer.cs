@@ -4,6 +4,7 @@ using FlowLine.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FlowLine.Migrations.SqlServer.Migrations
 {
     [DbContext(typeof(FlowLineDbContext))]
-    partial class FlowLineDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260702154906_RenameStaffTable")]
+    partial class RenameStaffTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -27,13 +30,13 @@ namespace FlowLine.Migrations.SqlServer.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int")
-                        .HasColumnName("Id");
+                        .HasColumnName("ID");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("AssigneeNumber")
-                        .HasColumnType("nvarchar(max)")
-                        .HasColumnName("AssignedNumber");
+                    b.Property<int?>("AssigneeNumber")
+                        .HasColumnType("int")
+                        .HasColumnName("Assigne Number");
 
                     b.Property<string>("Channel")
                         .HasColumnType("nvarchar(max)")
@@ -50,7 +53,7 @@ namespace FlowLine.Migrations.SqlServer.Migrations
                     b.Property<string>("OrderId")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)")
-                        .HasColumnName("Orderid");
+                        .HasColumnName("OrderId");
 
                     b.Property<string>("PackedBy")
                         .HasColumnType("nvarchar(max)")
@@ -60,9 +63,8 @@ namespace FlowLine.Migrations.SqlServer.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("PackedDate");
 
-                    b.Property<string>("Qty")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)")
+                    b.Property<int>("Qty")
+                        .HasColumnType("int")
                         .HasColumnName("QTY");
 
                     b.Property<string>("Sku")
@@ -72,7 +74,7 @@ namespace FlowLine.Migrations.SqlServer.Migrations
 
                     b.Property<string>("Status")
                         .HasColumnType("nvarchar(max)")
-                        .HasColumnName("TestStatus");
+                        .HasColumnName("Status");
 
                     b.Property<string>("TestedBy")
                         .HasColumnType("nvarchar(max)")

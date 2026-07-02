@@ -3,9 +3,9 @@ using FlowLine.Domain.Entities.External;
 namespace FlowLine.Application.Staff;
 
 /// <summary>
-/// Read-only access to the company <c>Staff_Table</c> for login and the assignment UI. Staff are
+/// Read-only access to the company <c>StaffTable</c> for login and the assignment UI. Staff are
 /// company-owned data (see <see cref="StaffMember"/>); this service never writes to the table.
-/// On the SQLite dev provider a mock Staff_Table is seeded so login works locally too.
+/// On the SQLite dev provider a mock StaffTable is seeded so login works locally too.
 /// </summary>
 public interface IStaffService
 {

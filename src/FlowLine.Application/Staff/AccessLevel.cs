@@ -1,7 +1,7 @@
 namespace FlowLine.Application.Staff;
 
 /// <summary>
-/// The company <c>Staff_Table."Testing Power"</c> column is really an access level:
+/// The company <c>StaffTable."TestingPower"</c> column is really an access level:
 /// 1 = normal staff, 2 = advanced (read-only reports), 3 = manager (full access).
 /// A null/unknown level is treated as the least-privileged <see cref="Staff"/>.
 /// </summary>

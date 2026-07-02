@@ -17,7 +17,7 @@ public sealed class SqlServerDesignTimeDbContextFactory : IDesignTimeDbContextFa
     {
         var connectionString =
             Environment.GetEnvironmentVariable("FLOWLINE_SQLSERVER")
-            ?? "Server=localhost,1433;Database=FlowLine;User Id=sa;Password=FlowLine!Dev2026;TrustServerCertificate=True";
+            ?? "Server=WIN-K1TRUVHT0PC\\XUMGPC,1433;Database=xumlocal;User Id=XumAdmin;Password=Lolipopchainsaw3;TrustServerCertificate=True";
 
         var options = new DbContextOptionsBuilder<FlowLineDbContext>()
             .UseSqlServer(

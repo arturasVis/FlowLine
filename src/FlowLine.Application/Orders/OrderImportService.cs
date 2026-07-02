@@ -23,9 +23,10 @@ public class OrderImportService(FlowLineDbContext db, IOrderService orders) : IO
             .OrderByDescending(h => h.Date)
             .ToListAsync(cancellationToken);
 
-        // Staff_Table is a small lookup list, so resolve assignee names against an in-memory map
-        // rather than a SQL join — a nullable "Assigne Number" -> non-nullable "Staff number" join
-        // key doesn't translate to SQL anyway.
+        // StaffTable is a small lookup list, so resolve assignee names against an in-memory map
+        // rather than a SQL join — a nullable "AssignedNumber" -> non-nullable "StaffNumber" join
+        // key doesn't translate to SQL anyway. (In the real data AssignedNumber is usually a
+        // non-numeric marker like "Unknown", so it reads as null and no name resolves.)
         var staffNames = await db.Staff
             .ToDictionaryAsync(s => s.StaffNumber, s => s.Name, cancellationToken);
 

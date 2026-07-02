@@ -28,36 +28,37 @@ internal static class SqliteTestDatabase
     }
 
     /// <summary>
-    /// Creates SQLite stand-ins for the company-owned external tables (Staff_Table, History).
+    /// Creates SQLite stand-ins for the company-owned external tables (StaffTable, History).
     /// They're ExcludeFromMigrations, so EnsureCreated skips them — tests exercising staff login,
-    /// imports, or prebuild lookups create them by hand, matching the HasColumnName mapping
-    /// (spaces included) in FlowLineDbContext.ConfigureExternalTables.
+    /// imports, or prebuild lookups create them by hand. Column names/types mirror the real company
+    /// schema mapped in FlowLineDbContext.ConfigureExternalTables (Orderid/TestStatus/AssignedNumber,
+    /// with QTY and AssignedNumber stored as text as they are on the company server).
     /// </summary>
     public static async Task CreateExternalTablesAsync(FlowLineDbContext db)
     {
         await db.Database.ExecuteSqlRawAsync(
             """
-            CREATE TABLE "Staff_Table" (
-                "Staff number" INTEGER NOT NULL PRIMARY KEY,
+            CREATE TABLE "StaffTable" (
+                "StaffNumber" INTEGER NOT NULL PRIMARY KEY,
                 "Name" TEXT NOT NULL,
-                "Testing Power" INTEGER NULL
+                "TestingPower" INTEGER NULL
             );
             """);
         await db.Database.ExecuteSqlRawAsync(
             """
             CREATE TABLE "History" (
-                "ID" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                "OrderId" TEXT NOT NULL,
+                "Id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                "Orderid" TEXT NOT NULL,
                 "SKU" TEXT NOT NULL,
-                "QTY" INTEGER NOT NULL,
+                "QTY" TEXT NOT NULL,
                 "Channel" TEXT NULL,
                 "Date" TEXT NOT NULL,
                 "IsTested" INTEGER NOT NULL,
                 "TestedBy" TEXT NULL,
-                "Status" TEXT NULL,
+                "TestStatus" TEXT NULL,
                 "PackedBy" TEXT NULL,
                 "PackedDate" TEXT NULL,
-                "Assigne Number" INTEGER NULL
+                "AssignedNumber" TEXT NULL
             );
             """);
     }
