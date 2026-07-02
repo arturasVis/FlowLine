@@ -28,6 +28,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             }
 
             candidate.ClaimedByStationId = stationId;
+            candidate.ClaimedAtUtc = DateTime.UtcNow;
             candidate.Status = WorkItemStatus.InProgress;
 
             try
@@ -46,7 +47,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         }
     }
 
-    public async Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default)
+    public async Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, CancellationToken cancellationToken = default)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -76,11 +77,22 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             ?? throw new RelayOperationException(
                 $"Stage {stage.Id} has no remaining steps for WorkItem {workItemId}.");
 
+        // The step began when the previous step at this stage finished — or, for the stage's
+        // first step, when the claim was taken. QueuedAtUtc is the last-resort fallback for
+        // WorkItems claimed before ClaimedAtUtc existed; it overstates by the queue wait.
+        var stageStepIds = orderedSteps.Select(s => s.Id).ToHashSet();
+        var startedAtUtc = workItem.StepCompletions
+            .Where(sc => stageStepIds.Contains(sc.StepId))
+            .Select(sc => (DateTime?)sc.CompletedAtUtc)
+            .Max() ?? workItem.ClaimedAtUtc ?? workItem.QueuedAtUtc;
+
         db.StepCompletions.Add(new StepCompletion
         {
             WorkItemId = workItem.Id,
             StepId = nextStep.Id,
             StationId = stationId,
+            CompletedByStaffNumber = staffNumber,
+            StartedAtUtc = startedAtUtc,
             CompletedAtUtc = DateTime.UtcNow,
         });
 
@@ -97,6 +109,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             {
                 workItem.Status = WorkItemStatus.Completed;
                 workItem.ClaimedByStationId = null;
+                workItem.ClaimedAtUtc = null;
                 outcome = AdvanceOutcome.Completed;
             }
             else
@@ -104,6 +117,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
                 workItem.CurrentStageId = nextStage.Id;
                 workItem.Status = WorkItemStatus.Queued;
                 workItem.ClaimedByStationId = null;
+                workItem.ClaimedAtUtc = null;
                 workItem.QueuedAtUtc = DateTime.UtcNow;
                 outcome = AdvanceOutcome.HandedOff;
             }
@@ -183,20 +197,40 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             throw new RelayOperationException("A prebuild can only be scanned at the workflow's first station.");
         }
 
-        // The scanned ID is a History OrderId; the new WorkItem inherits that row's SKU/qty/channel.
-        var history = await db.History.FirstOrDefaultAsync(h => h.OrderId == prebuildId, cancellationToken)
-            ?? throw new RelayOperationException($"No prebuild found in History for '{prebuildId}'.");
-
-        // Guard against scanning the same prebuild into the line twice while it's still in flight.
-        var alreadyInFlight = await db.WorkItems.AnyAsync(
+        // An order already on this line takes priority over History: if it's sitting Queued at
+        // this entry stage, the scan *claims* it instead of creating a duplicate — that's how
+        // orders authored on the Orders screen (or imported from History) get started on a
+        // prebuild workflow. Anything else in flight means a duplicate scan.
+        var existing = await db.WorkItems.FirstOrDefaultAsync(
             wi => wi.WorkflowId == station.Stage.WorkflowId
                 && wi.OrderNumber == prebuildId
                 && wi.Status != WorkItemStatus.Completed,
             cancellationToken);
-        if (alreadyInFlight)
+        if (existing is not null)
         {
-            throw new RelayOperationException($"Prebuild '{prebuildId}' is already on this line.");
+            if (existing.Status == WorkItemStatus.Queued && existing.CurrentStageId == station.StageId)
+            {
+                existing.ClaimedByStationId = stationId;
+                existing.ClaimedAtUtc = DateTime.UtcNow;
+                existing.Status = WorkItemStatus.InProgress;
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw new RelayOperationException($"'{prebuildId}' was just claimed by another station.");
+                }
+                notifier.NotifyStageChanged(station.StageId);
+                return existing;
+            }
+            throw new RelayOperationException($"'{prebuildId}' is already being worked on this line.");
         }
+
+        // Not on the line yet — the scanned ID must then be a History OrderId; the new
+        // WorkItem inherits that row's SKU/qty/channel.
+        var history = await db.History.FirstOrDefaultAsync(h => h.OrderId == prebuildId, cancellationToken)
+            ?? throw new RelayOperationException($"'{prebuildId}' is not in History and doesn't match a queued order.");
 
         // Created already claimed and InProgress at the scanning station, so the operator can begin
         // immediately; it then hands off downstream like any other unit.
@@ -211,6 +245,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             Channel = history.Channel,
             Status = WorkItemStatus.InProgress,
             ClaimedByStationId = stationId,
+            ClaimedAtUtc = now,
             QueuedAtUtc = now,
         };
         db.WorkItems.Add(workItem);

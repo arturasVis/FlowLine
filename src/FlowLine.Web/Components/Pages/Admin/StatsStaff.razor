@@ -1,0 +1,150 @@
+@page "/admin/stats/{WorkflowId:int}/staff/{StaffNumber:int}"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
+@inject IStatsService StatsService
+@inject IJSRuntime JS
+
+<PageTitle>@DisplayName — Stats</PageTitle>
+
+<div class="admin-page stats-page">
+    @if (_notFound)
+    {
+        <p>Workflow @WorkflowId not found.</p>
+    }
+    else if (_stats is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <a class="stats-back" href="@($"/admin/stats/{WorkflowId}{RangeQuery}")">← @_stats.WorkflowName</a>
+        <h1>@DisplayName</h1>
+        <p>Individual numbers on @_stats.WorkflowName, against the workflow-wide averages for the same range.</p>
+
+        <StatsDateControls From="@FromDate" To="@ToDate" />
+
+        <div class="stats-cards">
+            <div class="stat-card">
+                <span class="stat-value">@_stats.StepsCompleted</span>
+                <span class="stat-label">Steps completed</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@_stats.UnitsTouched</span>
+                <span class="stat-label">Units worked on</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@StatsFormatting.Duration(_stats.AvgStepDuration)</span>
+                <span class="stat-label">Avg step time (all: @StatsFormatting.Duration(_stats.WorkflowAvgStepDuration))</span>
+            </div>
+            <div class="stat-card @StatsFormatting.DeltaClass(_stats.OverallDeltaPercent)">
+                <span class="stat-value">@StatsFormatting.Delta(_stats.OverallDeltaPercent)</span>
+                <span class="stat-label">Overall vs average, same step mix</span>
+            </div>
+        </div>
+
+        @if (_stats.StepsCompleted == 0)
+        {
+            <p class="stats-empty">No step completions for this operator in this range.</p>
+        }
+        else
+        {
+            @if (_stats.StepComparisons.Any(c => c.StaffAvg is not null))
+            {
+                <h2>Per step vs workflow average</h2>
+                <div class="chart-box chart-tall"><canvas id="chart-staff-steps"></canvas></div>
+            }
+
+            <table class="workflow-table stats-table">
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Times done</th>
+                        <th>Their avg</th>
+                        <th>Workflow avg</th>
+                        <th>Delta</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var comparison in _stats.StepComparisons)
+                    {
+                        <tr>
+                            <td>@comparison.StageName · @comparison.StepName</td>
+                            <td>@comparison.TimesDone</td>
+                            <td>@StatsFormatting.Duration(comparison.StaffAvg)</td>
+                            <td>@StatsFormatting.Duration(comparison.WorkflowAvg)</td>
+                            <td class="@StatsFormatting.DeltaClass(comparison.DeltaPercent)">@StatsFormatting.Delta(comparison.DeltaPercent)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <h2>What they worked on (by SKU)</h2>
+            <table class="workflow-table stats-table">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Units touched</th>
+                        <th>Steps completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var sku in _stats.Skus)
+                    {
+                        <tr>
+                            <td>@sku.Sku</td>
+                            <td>@sku.UnitsTouched</td>
+                            <td>@sku.StepsCompleted</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+    [Parameter] public int StaffNumber { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToParam { get; set; }
+
+    private DateOnly? FromDate => StatsDateRange.Parse(FromParam);
+    private DateOnly? ToDate => StatsDateRange.Parse(ToParam);
+    private string RangeQuery => StatsDateRange.QuerySuffix(FromDate, ToDate);
+
+    private StaffStats? _stats;
+    private bool _notFound;
+    private bool _chartsPending;
+
+    private string DisplayName => _stats?.Name ?? $"Staff #{StaffNumber}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _stats = await StatsService.GetStaffStatsAsync(
+            WorkflowId, StaffNumber, StatsDateRange.StartUtc(FromDate), StatsDateRange.EndUtcExclusive(ToDate));
+        _notFound = _stats is null;
+        _chartsPending = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_chartsPending || _stats is null)
+        {
+            return;
+        }
+        _chartsPending = false;
+
+        var timed = _stats.StepComparisons.Where(c => c.StaffAvg is not null).ToList();
+        if (timed.Count > 0)
+        {
+            await JS.InvokeVoidAsync("flowlineCharts.durationGroupedBar", "chart-staff-steps",
+                timed.Select(c => $"{c.StageName} · {c.StepName}").ToArray(),
+                new[] { DisplayName, "Workflow average" },
+                new[]
+                {
+                    timed.Select(c => c.StaffAvg!.Value.TotalSeconds).ToArray(),
+                    timed.Select(c => c.WorkflowAvg?.TotalSeconds ?? 0).ToArray(),
+                });
+        }
+    }
+}

@@ -1,0 +1,55 @@
+@inject NavigationManager Nav
+
+@* Date-range filter for the stats pages. Presets + a custom range; applying a range
+   navigates to the same page with from/to query params, which the host page picks up via
+   [SupplyParameterFromQuery] — so ranges survive drill-down links and browser back. *@
+<div class="stats-daterange">
+    <div class="range-presets">
+        <button class="@PresetClass(null, null)" @onclick="() => SetRange(null, null)">All time</button>
+        <button class="@PresetClass(Today, Today)" @onclick="() => SetRange(Today, Today)">Today</button>
+        <button class="@PresetClass(WeekStart, Today)" @onclick="() => SetRange(WeekStart, Today)">This week</button>
+        <button class="@PresetClass(Today.AddDays(-6), Today)" @onclick="() => SetRange(Today.AddDays(-6), Today)">Last 7 days</button>
+        <button class="@PresetClass(MonthStart, Today)" @onclick="() => SetRange(MonthStart, Today)">This month</button>
+    </div>
+    <div class="range-custom">
+        <input type="date" @bind="_customFrom" />
+        <span class="range-sep">to</span>
+        <input type="date" @bind="_customTo" />
+        <button class="range-apply" @onclick="ApplyCustom">Apply</button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public DateOnly? From { get; set; }
+    [Parameter] public DateOnly? To { get; set; }
+
+    private DateOnly? _customFrom;
+    private DateOnly? _customTo;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
+
+    // ISO week: Monday is the first day.
+    private static DateOnly WeekStart => Today.AddDays(-(((int)Today.DayOfWeek + 6) % 7));
+
+    private static DateOnly MonthStart => new(Today.Year, Today.Month, 1);
+
+    protected override void OnParametersSet()
+    {
+        _customFrom = From;
+        _customTo = To;
+    }
+
+    private string PresetClass(DateOnly? from, DateOnly? to) =>
+        From == from && To == to ? "preset active" : "preset";
+
+    private void ApplyCustom() => SetRange(_customFrom, _customTo);
+
+    private void SetRange(DateOnly? from, DateOnly? to)
+    {
+        Nav.NavigateTo(Nav.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["from"] = from?.ToString("yyyy-MM-dd"),
+            ["to"] = to?.ToString("yyyy-MM-dd"),
+        }));
+    }
+}

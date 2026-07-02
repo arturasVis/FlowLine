@@ -24,7 +24,11 @@ public interface IRelayService
     /// If provided, the call fails with <see cref="RelayOperationException"/> unless this
     /// station currently holds the WorkItem's claim.
     /// </param>
-    Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default);
+    /// <param name="staffNumber">
+    /// Staff number of the operator completing the step, recorded on the StepCompletion for
+    /// timing/attribution reporting. Null if no operator identity is available.
+    /// </param>
+    Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, CancellationToken cancellationToken = default);
 
     /// <summary>Number of WorkItems currently Queued at a stage (FR-15).</summary>
     Task<int> GetQueueDepthAsync(int stageId, CancellationToken cancellationToken = default);
@@ -45,11 +49,13 @@ public interface IRelayService
     Task<WorkItem?> GetActiveWorkItemAsync(int stationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Starts a new unit from a scanned prebuild ID at a prebuild-requiring workflow's first
-    /// station: looks the ID up in the company History table (matched on OrderId), creates a
-    /// WorkItem inheriting that row's SKU/qty/channel, and claims it to the scanning station so
-    /// work begins immediately. Fails with <see cref="RelayOperationException"/> if the ID isn't in
-    /// History, the station isn't the workflow's first stage, or that prebuild is already on the line.
+    /// Starts a unit from a scanned ID at a prebuild-requiring workflow's first station. Two
+    /// sources, in priority order: a WorkItem already Queued at this entry stage with that
+    /// OrderNumber (authored on the Orders screen or imported) is claimed to the scanning
+    /// station; otherwise the ID is looked up in the company History table (matched on
+    /// OrderId) and a new WorkItem inheriting that row's SKU/qty/channel is created already
+    /// claimed. Fails with <see cref="RelayOperationException"/> if the ID matches neither, the
+    /// station isn't the workflow's first stage, or that order is already being worked on.
     /// </summary>
     Task<WorkItem> CreateFromPrebuildAsync(int stationId, string prebuildId, CancellationToken cancellationToken = default);
 }

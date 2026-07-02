@@ -98,6 +98,26 @@ public static class SeedData
             return;
         }
 
+        // These mock tables aren't covered by migrations (the real ones are company-owned and
+        // ExcludeFromMigrations), so CREATE TABLE IF NOT EXISTS alone leaves a stale shape
+        // behind whenever the mapped schema changes (hit this: an old dev DB still had
+        // History."Status"/"Assigne Number" and every History query crashed). They're
+        // dev-only mocks, so on drift just drop and rebuild.
+        // Stale = the table exists (COUNT(*) > 0 columns) but lacks any of the three columns
+        // whose names the mapping has changed over time. A missing table is not stale (0 AND …
+        // is 0 in SQLite) — CREATE TABLE below handles that case.
+        var historyIsStale = await context.Database
+            .SqlQueryRaw<int>(
+                """
+                SELECT COUNT(*) > 0 AND SUM("name" IN ('Orderid', 'TestStatus', 'AssignedNumber')) < 3 AS "Value"
+                FROM pragma_table_info('History')
+                """)
+            .SingleAsync() == 1;
+        if (historyIsStale)
+        {
+            await context.Database.ExecuteSqlRawAsync("""DROP TABLE "History";""");
+        }
+
         await context.Database.ExecuteSqlRawAsync(
             """
             CREATE TABLE IF NOT EXISTS "StaffTable" (

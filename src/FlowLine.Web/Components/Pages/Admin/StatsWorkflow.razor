@@ -1,0 +1,175 @@
+@page "/admin/stats/{WorkflowId:int}"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
+@inject IStatsService StatsService
+@inject IJSRuntime JS
+
+<PageTitle>@(_stats?.WorkflowName ?? "Workflow") — Stats</PageTitle>
+
+<div class="admin-page stats-page">
+    @if (_notFound)
+    {
+        <p>Workflow @WorkflowId not found.</p>
+    }
+    else if (_stats is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <a class="stats-back" href="@($"/admin/stats{RangeQuery}")">← All workflows</a>
+        <h1>@_stats.WorkflowName</h1>
+        <p>Completed units in the selected range.</p>
+
+        <StatsDateControls From="@FromDate" To="@ToDate" />
+
+        <div class="stats-cards">
+            <div class="stat-card">
+                <span class="stat-value">@_stats.UnitsCompleted</span>
+                <span class="stat-label">Units built</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@StatsFormatting.Duration(_stats.AvgHandsOnPerUnit)</span>
+                <span class="stat-label">Avg hands-on / unit</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value">@StatsFormatting.Duration(_stats.AvgLeadTimePerUnit)</span>
+                <span class="stat-label">Avg lead time / unit</span>
+            </div>
+        </div>
+
+        @if (_stats.UnitsCompleted == 0)
+        {
+            <p class="stats-empty">No units were completed in this range.</p>
+        }
+        else
+        {
+            @if (_stats.UnitsPerDay.Count > 0)
+            {
+                <h2>Units built per day</h2>
+                <div class="chart-box"><canvas id="chart-units-per-day"></canvas></div>
+            }
+
+            @if (_stats.StepAverages.Any(sa => sa.AvgDuration is not null))
+            {
+                <h2>Average time per step</h2>
+                <div class="chart-box chart-tall"><canvas id="chart-steps"></canvas></div>
+            }
+
+            <h2>What was built (by SKU)</h2>
+            @if (_stats.Skus.Count > 1)
+            {
+                <div class="chart-box"><canvas id="chart-skus"></canvas></div>
+            }
+            <table class="workflow-table stats-table">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Units built</th>
+                        <th>Avg hands-on / unit</th>
+                        <th>Avg lead time / unit</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var sku in _stats.Skus)
+                    {
+                        <tr>
+                            <td>@sku.Sku</td>
+                            <td>@sku.UnitsCompleted</td>
+                            <td>@StatsFormatting.Duration(sku.AvgHandsOnPerUnit)</td>
+                            <td>@StatsFormatting.Duration(sku.AvgLeadTimePerUnit)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <h2>Staff</h2>
+            @if (_stats.Staff.Count == 0)
+            {
+                <p class="stats-empty">No step completions carry an operator yet — they're recorded from the station sign-in as work happens.</p>
+            }
+            else
+            {
+                <table class="workflow-table stats-table">
+                    <thead>
+                        <tr>
+                            <th>Operator</th>
+                            <th>Steps completed</th>
+                            <th>Units touched</th>
+                            <th>Avg step time</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var staff in _stats.Staff)
+                        {
+                            <tr>
+                                <td>@(staff.Name ?? $"Staff #{staff.StaffNumber}")</td>
+                                <td>@staff.StepsCompleted</td>
+                                <td>@staff.UnitsTouched</td>
+                                <td>@StatsFormatting.Duration(staff.AvgStepDuration)</td>
+                                <td><a class="stats-link" href="@($"/admin/stats/{WorkflowId}/staff/{staff.StaffNumber}{RangeQuery}")">View stats →</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToParam { get; set; }
+
+    private DateOnly? FromDate => StatsDateRange.Parse(FromParam);
+    private DateOnly? ToDate => StatsDateRange.Parse(ToParam);
+    private string RangeQuery => StatsDateRange.QuerySuffix(FromDate, ToDate);
+
+    private WorkflowStats? _stats;
+    private bool _notFound;
+    private bool _chartsPending;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _stats = await StatsService.GetWorkflowStatsAsync(
+            WorkflowId, StatsDateRange.StartUtc(FromDate), StatsDateRange.EndUtcExclusive(ToDate));
+        _notFound = _stats is null;
+        _chartsPending = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_chartsPending || _stats is null)
+        {
+            return;
+        }
+        _chartsPending = false;
+
+        if (_stats.UnitsPerDay.Count > 0)
+        {
+            await JS.InvokeVoidAsync("flowlineCharts.countLine", "chart-units-per-day",
+                _stats.UnitsPerDay.Select(d => d.Date.ToString("dd MMM")).ToArray(),
+                _stats.UnitsPerDay.Select(d => d.Count).ToArray(),
+                "Units built");
+        }
+
+        var timedSteps = _stats.StepAverages.Where(sa => sa.AvgDuration is not null).ToList();
+        if (timedSteps.Count > 0)
+        {
+            await JS.InvokeVoidAsync("flowlineCharts.durationBar", "chart-steps",
+                timedSteps.Select(sa => $"{sa.StageName} · {sa.StepName}").ToArray(),
+                timedSteps.Select(sa => sa.AvgDuration!.Value.TotalSeconds).ToArray(),
+                "Avg time");
+        }
+
+        if (_stats.Skus.Count > 1)
+        {
+            await JS.InvokeVoidAsync("flowlineCharts.countBar", "chart-skus",
+                _stats.Skus.Select(s => s.Sku).ToArray(),
+                _stats.Skus.Select(s => s.UnitsCompleted).ToArray(),
+                "Units built");
+        }
+    }
+}

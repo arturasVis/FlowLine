@@ -35,6 +35,13 @@ public class WorkItem : IConcurrencyAware
     public int? ClaimedByStationId { get; set; }
     public Station? ClaimedByStation { get; set; }
 
+    /// <summary>
+    /// When the current claim was taken — set on claim (or prebuild scan), cleared on
+    /// hand-off/completion. Anchors the StartedAtUtc of each stage's *first* StepCompletion,
+    /// which otherwise has no start marker (QueuedAtUtc includes queue wait). Always UTC.
+    /// </summary>
+    public DateTime? ClaimedAtUtc { get; set; }
+
     public Guid RowVersion { get; set; } = Guid.NewGuid();
 
     public List<StepCompletion> StepCompletions { get; set; } = [];

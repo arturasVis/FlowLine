@@ -1,0 +1,70 @@
+@page "/admin/stats"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
+@inject IStatsService StatsService
+
+<PageTitle>Stats — Admin</PageTitle>
+
+<div class="admin-page stats-page">
+    <h1>Production stats</h1>
+    <p>Completed units only — pick a workflow to drill into steps, SKUs, and staff.</p>
+
+    <StatsDateControls From="@FromDate" To="@ToDate" />
+
+    @if (_summaries is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_summaries.Count == 0)
+    {
+        <p>No workflows exist yet.</p>
+    }
+    else
+    {
+        <table class="workflow-table stats-table">
+            <thead>
+                <tr>
+                    <th>Workflow</th>
+                    <th>Units built</th>
+                    <th>Avg hands-on / unit</th>
+                    <th>Avg lead time / unit</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var summary in _summaries)
+                {
+                    <tr class="@(summary.IsActive ? null : "row-archived")">
+                        <td>
+                            @summary.WorkflowName
+                            @if (!summary.IsActive)
+                            {
+                                <span class="archived-tag">archived</span>
+                            }
+                        </td>
+                        <td>@summary.UnitsCompleted</td>
+                        <td>@StatsFormatting.Duration(summary.AvgHandsOnPerUnit)</td>
+                        <td>@StatsFormatting.Duration(summary.AvgLeadTimePerUnit)</td>
+                        <td><a class="stats-link" href="@($"/admin/stats/{summary.WorkflowId}{StatsDateRange.QuerySuffix(FromDate, ToDate)}")">View stats →</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToParam { get; set; }
+
+    private DateOnly? FromDate => StatsDateRange.Parse(FromParam);
+    private DateOnly? ToDate => StatsDateRange.Parse(ToParam);
+
+    private List<WorkflowStatsSummary>? _summaries;
+
+    // OnParametersSetAsync (not OnInitializedAsync) so a date-range change — which is just a
+    // same-page navigation with different query params — reloads the numbers.
+    protected override async Task OnParametersSetAsync() =>
+        _summaries = await StatsService.GetWorkflowSummariesAsync(
+            StatsDateRange.StartUtc(FromDate), StatsDateRange.EndUtcExclusive(ToDate));
+}

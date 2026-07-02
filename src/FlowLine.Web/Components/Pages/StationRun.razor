@@ -31,7 +31,7 @@ else
             @if (ShowPrebuildScan)
             {
                 <div class="prebuild-scan">
-                    <p>Scan or enter a prebuild ID to start a new unit.</p>
+                    <p>Scan or enter a prebuild ID or order number to start a unit.</p>
                     <input @ref="_prebuildInput" @bind="_prebuildEntry" @bind:event="oninput"
                            placeholder="Prebuild ID"
                            @onkeydown="HandlePrebuildKey" @onkeydown:stopPropagation="true" />
@@ -116,6 +116,7 @@ else
     private ElementReference _prebuildInput;
     private bool _prebuildInputFocused;
     private bool _focusRootPending;
+    private int? _staffNumber;
 
     // The first stage of the workflow (lowest OrderIndex) — where a prebuild is scanned to start a unit.
     private bool IsEntryStage =>
@@ -141,6 +142,7 @@ else
 
         // URL-guard: a level-1 operator can only run stations of a workflow assigned to them.
         var user = AuthState is null ? null : (await AuthState).User;
+        _staffNumber = user?.GetStaffNumber() is int n and > 0 ? n : null;
         if (user is not null && user.GetLevel() <= AccessLevel.Staff)
         {
             var assigned = await Assignments.GetAssignedWorkflowIdsAsync(user.GetStaffNumber());
@@ -274,7 +276,7 @@ else
         _errorMessage = null;
         try
         {
-            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id);
+            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id, _staffNumber);
             // Whatever the outcome — more steps left, handed off, or completed — refreshing
             // shows the right next thing: the next step, or this station pulling its next unit.
             await RefreshAsync();

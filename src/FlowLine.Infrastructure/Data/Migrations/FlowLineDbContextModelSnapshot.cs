@@ -204,6 +204,12 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.Property<DateTime>("CompletedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("CompletedByStaffNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("StationId")
                         .HasColumnType("INTEGER");
 
@@ -231,6 +237,9 @@ namespace FlowLine.Infrastructure.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Channel")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ClaimedAtUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("ClaimedByStationId")

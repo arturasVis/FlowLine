@@ -5,6 +5,7 @@ using FlowLine.Application.Orders;
 using FlowLine.Application.Relay;
 using FlowLine.Application.Staff;
 using FlowLine.Application.Stations;
+using FlowLine.Application.Stats;
 using FlowLine.Application.Timing;
 using FlowLine.Infrastructure.Data;
 using FlowLine.Web.Components;
@@ -77,6 +78,7 @@ builder.Services.AddScoped<IOrderService, OrderService>();
 // external tables exist. Registered unconditionally; the import UI guards on the provider.
 builder.Services.AddScoped<IOrderImportService, OrderImportService>();
 builder.Services.AddScoped<ITimingService, TimingService>();
+builder.Services.AddScoped<IStatsService, StatsService>();
 builder.Services.AddScoped<IStationService, StationService>();
 builder.Services.AddScoped<IStaffService, StaffService>();
 builder.Services.AddScoped<IAssignmentService, AssignmentService>();
