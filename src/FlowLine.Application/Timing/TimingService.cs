@@ -37,13 +37,11 @@ public class TimingService(FlowLineDbContext db) : ITimingService
         var stageDurations = new List<StageDuration>();
         var previousStageEnd = workItem.CreatedAtUtc;
 
-        foreach (var stage in workItem.Workflow.Stages.OrderBy(s => s.OrderIndex))
+        // Order by when each stage actually finished, not by OrderIndex — so a unit that branched
+        // (skipped stages, or looped back and forward again) reads along its real path. For a plain
+        // linear workflow completion-time order equals OrderIndex order, so this is unchanged there.
+        foreach (var (stage, stageEnd) in lastCompletionByStage.OrderBy(kv => kv.Value))
         {
-            if (!lastCompletionByStage.TryGetValue(stage, out var stageEnd))
-            {
-                continue;
-            }
-
             stageDurations.Add(new StageDuration(stage.Name, stage.OrderIndex, stageEnd - previousStageEnd));
             previousStageEnd = stageEnd;
         }

@@ -17,25 +17,18 @@ else if (_workflow is null)
 }
 else
 {
-    <div class="admin-page">
+    <div class="admin-page builder">
         <p><a href="/admin/workflows">&larr; All workflows</a></p>
 
         <div class="workflow-header">
-            <input @bind="_workflow.Name" placeholder="Name" />
-            <input @bind="_workflow.Description" placeholder="Description" />
-            <button @onclick="SaveWorkflowAsync">Save</button>
+            <input class="workflow-name" @bind="_workflow.Name" @bind:after="SaveWorkflowAsync" placeholder="Workflow name" />
+            <input class="workflow-desc" @bind="_workflow.Description" @bind:after="SaveWorkflowAsync" placeholder="Description (optional)" />
             <span class="status-badge">@(_workflow.IsActive ? "Active" : "Archived")</span>
+            @if (_saveStatus is not null)
+            {
+                <span class="save-status">@_saveStatus</span>
+            }
         </div>
-
-        <label class="prebuild-toggle">
-            <input type="checkbox" checked="@_workflow.RequiresPrebuild" @onchange="TogglePrebuildAsync" />
-            Requires a prebuild ID scanned at step 1
-        </label>
-
-        <label class="prebuild-toggle">
-            <input type="checkbox" checked="@_workflow.AllowAdHocStart" @onchange="ToggleAdHocAsync" />
-            Free-run / training mode — start runs without an order (entry station gets a "Start run" button)
-        </label>
 
         @{
             var readiness = WorkflowReadiness.For(_workflow);
@@ -62,115 +55,236 @@ else
             <p class="error">@_error</p>
         }
 
+        <div class="advanced-section workflow-advanced">
+            <button type="button" class="advanced-toggle" @onclick="() => _entryModeExpanded = !_entryModeExpanded">
+                <span class="chevron">@(_entryModeExpanded ? "▾" : "▸")</span> Entry mode (advanced)
+            </button>
+            @if (_entryModeExpanded)
+            {
+                <div class="advanced-body">
+                    <label class="toggle-line">
+                        <input type="checkbox" checked="@_workflow.RequiresPrebuild" @onchange="TogglePrebuildAsync" />
+                        Requires a prebuild ID scanned at the first stage
+                    </label>
+                    <label class="toggle-line">
+                        <input type="checkbox" checked="@_workflow.AllowAdHocStart" @onchange="ToggleAdHocAsync" />
+                        Free-run / training mode — start runs without an order (entry station gets a "Start run" button)
+                    </label>
+                </div>
+            }
+        </div>
+
         @foreach (var stage in _workflow.Stages.OrderBy(s => s.OrderIndex).ToList())
         {
-            <section class="stage-card">
-                <header class="stage-card-header">
-                    <input @bind="stage.Name" />
-                    <button @onclick="() => SaveStageAsync(stage)">Save</button>
-                    <label class="scan-flag" title="Operators must scan an order number to claim a queued unit at this stage">
-                        <input type="checkbox" checked="@stage.RequiresScan" @onchange="e => ToggleStageScanAsync(stage, e)" />
-                        Requires scan to claim
-                    </label>
-                    <button @onclick="() => MoveStageAsync(stage, -1)" disabled="@(stage.OrderIndex == 0)">Move stage up</button>
-                    <button @onclick="() => MoveStageAsync(stage, 1)" disabled="@(stage.OrderIndex == _workflow.Stages.Count - 1)">Move stage down</button>
-                    <button class="danger" @onclick="() => DeleteStageAsync(stage)">Delete stage</button>
+            var stageExpanded = _expandedStages.Contains(stage.Id);
+            <section class="stage-card @(stageExpanded ? "expanded" : "")">
+                <header class="collapsible-header" @onclick="() => ToggleStage(stage)">
+                    <span class="chevron">@(stageExpanded ? "▾" : "▸")</span>
+                    <span class="collapsible-title">@(string.IsNullOrWhiteSpace(stage.Name) ? "(unnamed stage)" : stage.Name)</span>
+                    <span class="summary-chips">
+                        <span class="summary-chip">@stage.Steps.Count step@(stage.Steps.Count == 1 ? "" : "s")</span>
+                        @if (stage.Stations.Count == 0)
+                        {
+                            <span class="summary-chip warn">⚠ no station</span>
+                        }
+                        else
+                        {
+                            <span class="summary-chip">@string.Join(", ", stage.Stations.OrderBy(s => s.Name).Select(s => s.Name))</span>
+                        }
+                        @if (stage.Steps.Count == 0)
+                        {
+                            <span class="summary-chip warn">⚠ no steps</span>
+                        }
+                        @if (stage.RequiresScan)
+                        {
+                            <span class="summary-chip">scan to claim</span>
+                        }
+                        @if (stage.Branches.Count > 0)
+                        {
+                            <span class="summary-chip">@stage.Branches.Count branch@(stage.Branches.Count == 1 ? "" : "es")</span>
+                        }
+                    </span>
                 </header>
 
-                @if (stage.Stations.Count == 0)
+                @if (stageExpanded)
                 {
-                    <p class="stage-warning">⚠ No station mans this stage — units will stall here until you add one below.</p>
-                }
-                @if (stage.Steps.Count == 0)
-                {
-                    <p class="stage-warning">⚠ This stage has no steps yet.</p>
-                }
-
-                <div class="stage-stations">
-                    <span class="stations-label">Stations:</span>
-                    @foreach (var station in stage.Stations.OrderBy(s => s.Name).ToList())
-                    {
-                        <span class="station-chip">
-                            <input @bind="station.Name" />
-                            <button @onclick="() => SaveStationAsync(station)" title="Rename">Save</button>
-                            <button class="danger" @onclick="() => DeleteStationAsync(station)" title="Remove station">✕</button>
-                        </span>
-                    }
-                    <span class="add-station">
-                        <input @bind="_newStationNames[stage.Id]" placeholder="New station name" />
-                        <button @onclick="() => AddStationAsync(stage)">Add station</button>
-                    </span>
-                </div>
-
-                @foreach (var step in stage.Steps.OrderBy(s => s.OrderIndex).ToList())
-                {
-                    <div class="step-card">
-                        <input @bind="step.Name" placeholder="Step name" />
-                        <textarea @bind="step.Instructions" placeholder="Instructions"></textarea>
-                        <div class="step-card-actions">
-                            <button @onclick="() => SaveStepAsync(step)">Save</button>
-                            <button @onclick="() => MoveStepAsync(stage, step, -1)" disabled="@(step.OrderIndex == 0)">Move step up</button>
-                            <button @onclick="() => MoveStepAsync(stage, step, 1)" disabled="@(step.OrderIndex == stage.Steps.Count - 1)">Move step down</button>
-                            <button class="danger" @onclick="() => DeleteStepAsync(step)">Delete step</button>
-                        </div>
-
-                        <div class="media-list">
-                            @foreach (var media in step.MediaAssets.OrderBy(m => m.DisplayOrder))
-                            {
-                                <div class="media-thumb">
-                                    <img src="@($"/media/{media.FilePath}")" alt="" />
-                                    <button class="danger" @onclick="() => DeleteMediaAsync(media)">Remove</button>
-                                </div>
-                            }
-                            <InputFile OnChange="@(e => UploadMediaAsync(step, e))" />
-                        </div>
-
-                        <div class="inputs-editor">
-                            <span class="inputs-label">Data the operator records:</span>
-                            @foreach (var input in step.Inputs.OrderBy(i => i.OrderIndex).ToList())
-                            {
-                                <div class="input-row">
-                                    <input @bind="input.Label" placeholder="Label" />
-                                    <select @bind="input.Type">
-                                        <option value="@StepInputType.Text">Text</option>
-                                        <option value="@StepInputType.Number">Number</option>
-                                        <option value="@StepInputType.PassFail">Pass / Fail</option>
-                                        <option value="@StepInputType.Checklist">Checklist</option>
-                                    </select>
-                                    <label class="req-flag"><input type="checkbox" @bind="input.Required" /> required</label>
-                                    @if (input.Type == StepInputType.Checklist)
-                                    {
-                                        <textarea @bind="input.Options" placeholder="One checklist item per line"></textarea>
-                                    }
-                                    <button @onclick="() => SaveInputAsync(input)">Save</button>
-                                    <button @onclick="() => MoveInputAsync(step, input, -1)" disabled="@(input.OrderIndex == 0)">↑</button>
-                                    <button @onclick="() => MoveInputAsync(step, input, 1)" disabled="@(input.OrderIndex == step.Inputs.Count - 1)">↓</button>
-                                    <button class="danger" @onclick="() => DeleteInputAsync(input)" title="Remove input">✕</button>
-                                </div>
-                            }
-                            <div class="add-input">
-                                <input @bind="_newInputLabels[step.Id]" placeholder="New input label" />
-                                <select @bind="_newInputTypes[step.Id]">
-                                    <option value="@StepInputType.Text">Text</option>
-                                    <option value="@StepInputType.Number">Number</option>
-                                    <option value="@StepInputType.PassFail">Pass / Fail</option>
-                                    <option value="@StepInputType.Checklist">Checklist</option>
-                                </select>
-                                <label class="req-flag"><input type="checkbox" @bind="_newInputRequired[step.Id]" /> required</label>
-                                <button @onclick="() => AddInputAsync(step)">Add input</button>
+                    <div class="stage-body">
+                        <div class="edit-row">
+                            <input class="stage-name-input" @bind="stage.Name" @bind:after="() => SaveStageAsync(stage)" placeholder="Stage name" />
+                            <div class="row-actions">
+                                <button @onclick="() => MoveStageAsync(stage, -1)" disabled="@(stage.OrderIndex == 0)" title="Move stage up">↑</button>
+                                <button @onclick="() => MoveStageAsync(stage, 1)" disabled="@(stage.OrderIndex == _workflow.Stages.Count - 1)" title="Move stage down">↓</button>
+                                <button class="danger" @onclick="() => DeleteStageAsync(stage)">Delete stage</button>
                             </div>
+                        </div>
+
+                        <div class="stage-stations">
+                            <span class="stations-label">Manned by:</span>
+                            @foreach (var station in stage.Stations.OrderBy(s => s.Name).ToList())
+                            {
+                                <span class="station-chip">
+                                    <input @bind="station.Name" @bind:after="() => SaveStationAsync(station)" />
+                                    <button class="danger" @onclick="() => DeleteStationAsync(station)" title="Remove station">✕</button>
+                                </span>
+                            }
+                            <span class="add-station">
+                                <input @bind="_newStationNames[stage.Id]" placeholder="New station name" />
+                                <button @onclick="() => AddStationAsync(stage)">Add station</button>
+                            </span>
+                        </div>
+
+                        <div class="steps-list">
+                            @foreach (var step in stage.Steps.OrderBy(s => s.OrderIndex).ToList())
+                            {
+                                var stepExpanded = _expandedSteps.Contains(step.Id);
+                                <div class="step-card @(stepExpanded ? "expanded" : "")">
+                                    <header class="collapsible-header step" @onclick="() => ToggleStep(step)">
+                                        <span class="chevron">@(stepExpanded ? "▾" : "▸")</span>
+                                        <span class="collapsible-title">@(string.IsNullOrWhiteSpace(step.Name) ? "(unnamed step)" : step.Name)</span>
+                                        <span class="summary-chips">
+                                            @if (step.MediaAssets.Count > 0)
+                                            {
+                                                <span class="summary-chip">📷 @step.MediaAssets.Count</span>
+                                            }
+                                            @if (step.Inputs.Count > 0)
+                                            {
+                                                <span class="summary-chip">@step.Inputs.Count input@(step.Inputs.Count == 1 ? "" : "s")</span>
+                                            }
+                                        </span>
+                                    </header>
+
+                                    @if (stepExpanded)
+                                    {
+                                        <div class="step-body">
+                                            <input @bind="step.Name" @bind:after="() => SaveStepAsync(step)" placeholder="Step name" />
+                                            <textarea @bind="step.Instructions" @bind:after="() => SaveStepAsync(step)" placeholder="Instructions"></textarea>
+
+                                            <div class="media-list">
+                                                @foreach (var media in step.MediaAssets.OrderBy(m => m.DisplayOrder))
+                                                {
+                                                    <div class="media-thumb">
+                                                        <img src="@($"/media/{media.FilePath}")" alt="" />
+                                                        <button class="danger" @onclick="() => DeleteMediaAsync(media)">Remove</button>
+                                                    </div>
+                                                }
+                                                <InputFile OnChange="@(e => UploadMediaAsync(step, e))" />
+                                            </div>
+
+                                            <div class="row-actions step-actions">
+                                                <button @onclick="() => MoveStepAsync(stage, step, -1)" disabled="@(step.OrderIndex == 0)" title="Move step up">↑</button>
+                                                <button @onclick="() => MoveStepAsync(stage, step, 1)" disabled="@(step.OrderIndex == stage.Steps.Count - 1)" title="Move step down">↓</button>
+                                                <button class="danger" @onclick="() => DeleteStepAsync(step)">Delete step</button>
+                                            </div>
+
+                                            <div class="advanced-section">
+                                                <button type="button" class="advanced-toggle" @onclick="() => ToggleStepAdvanced(step)">
+                                                    <span class="chevron">@(_advancedSteps.Contains(step.Id) ? "▾" : "▸")</span> Data the operator records (advanced)
+                                                </button>
+                                                @if (_advancedSteps.Contains(step.Id))
+                                                {
+                                                    <div class="advanced-body inputs-editor">
+                                                        @foreach (var input in step.Inputs.OrderBy(i => i.OrderIndex).ToList())
+                                                        {
+                                                            <div class="input-row">
+                                                                <input @bind="input.Label" @bind:after="() => SaveInputAsync(input)" placeholder="Label" />
+                                                                <select @bind="input.Type" @bind:after="() => SaveInputAsync(input)">
+                                                                    <option value="@StepInputType.Text">Text</option>
+                                                                    <option value="@StepInputType.Number">Number</option>
+                                                                    <option value="@StepInputType.PassFail">Pass / Fail</option>
+                                                                    <option value="@StepInputType.Checklist">Checklist</option>
+                                                                </select>
+                                                                <label class="req-flag"><input type="checkbox" @bind="input.Required" @bind:after="() => SaveInputAsync(input)" /> required</label>
+                                                                @if (input.Type == StepInputType.Checklist)
+                                                                {
+                                                                    <textarea @bind="input.Options" @bind:after="() => SaveInputAsync(input)" placeholder="One checklist item per line"></textarea>
+                                                                }
+                                                                <button @onclick="() => MoveInputAsync(step, input, -1)" disabled="@(input.OrderIndex == 0)">↑</button>
+                                                                <button @onclick="() => MoveInputAsync(step, input, 1)" disabled="@(input.OrderIndex == step.Inputs.Count - 1)">↓</button>
+                                                                <button class="danger" @onclick="() => DeleteInputAsync(input)" title="Remove input">✕</button>
+                                                            </div>
+                                                        }
+                                                        <div class="add-input">
+                                                            <input @bind="_newInputLabels[step.Id]" placeholder="New input label" />
+                                                            <select @bind="_newInputTypes[step.Id]">
+                                                                <option value="@StepInputType.Text">Text</option>
+                                                                <option value="@StepInputType.Number">Number</option>
+                                                                <option value="@StepInputType.PassFail">Pass / Fail</option>
+                                                                <option value="@StepInputType.Checklist">Checklist</option>
+                                                            </select>
+                                                            <label class="req-flag"><input type="checkbox" @bind="_newInputRequired[step.Id]" /> required</label>
+                                                            <button @onclick="() => AddInputAsync(step)">Add input</button>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="add-row">
+                            <input @bind="_newStepNames[stage.Id]" placeholder="New step name" />
+                            <button @onclick="() => AddStepAsync(stage)">Add step</button>
+                        </div>
+
+                        <div class="advanced-section">
+                            <button type="button" class="advanced-toggle" @onclick="() => ToggleStageAdvanced(stage)">
+                                <span class="chevron">@(_advancedStages.Contains(stage.Id) ? "▾" : "▸")</span> Scan &amp; routing (advanced)
+                            </button>
+                            @if (_advancedStages.Contains(stage.Id))
+                            {
+                                <div class="advanced-body">
+                                    <label class="toggle-line scan-flag" title="Operators must scan an order number to claim a queued unit at this stage">
+                                        <input type="checkbox" checked="@stage.RequiresScan" @onchange="e => ToggleStageScanAsync(stage, e)" />
+                                        Requires a scan to claim a unit at this stage
+                                    </label>
+
+                                    <div class="stage-branches">
+                                        <span class="branches-label">Routing branches (fork):</span>
+                                        @foreach (var branch in stage.Branches.OrderBy(b => b.OrderIndex).ToList())
+                                        {
+                                            <span class="branch-chip">
+                                                <input @bind="branch.Label" @bind:after="() => SaveBranchAsync(branch)" placeholder="Button label" />
+                                                <select @bind="branch.TargetStageId" @bind:after="() => SaveBranchAsync(branch)">
+                                                    <option value="">Finish (Complete)</option>
+                                                    @foreach (var otherStage in _workflow.Stages.OrderBy(s => s.OrderIndex))
+                                                    {
+                                                        if (otherStage.Id != stage.Id)
+                                                        {
+                                                            <option value="@otherStage.Id">@otherStage.Name</option>
+                                                        }
+                                                    }
+                                                </select>
+                                                <button @onclick="() => MoveBranchAsync(stage, branch, -1)" disabled="@(branch.OrderIndex == 0)">↑</button>
+                                                <button @onclick="() => MoveBranchAsync(stage, branch, 1)" disabled="@(branch.OrderIndex == stage.Branches.Count - 1)">↓</button>
+                                                <button class="danger" @onclick="() => DeleteBranchAsync(branch)" title="Remove branch">✕</button>
+                                            </span>
+                                        }
+                                        <span class="add-branch">
+                                            <input @bind="_newBranchLabels[stage.Id]" placeholder="New branch label" />
+                                            <select @bind="_newBranchTargets[stage.Id]">
+                                                <option value="">Finish (Complete)</option>
+                                                @foreach (var otherStage in _workflow.Stages.OrderBy(s => s.OrderIndex))
+                                                {
+                                                    if (otherStage.Id != stage.Id)
+                                                    {
+                                                        <option value="@otherStage.Id">@otherStage.Name</option>
+                                                    }
+                                                }
+                                            </select>
+                                            <button @onclick="() => AddBranchAsync(stage)">Add branch</button>
+                                        </span>
+                                    </div>
+                                </div>
+                            }
                         </div>
                     </div>
                 }
-
-                <div class="add-row">
-                    <input @bind="_newStepNames[stage.Id]" placeholder="New step name" />
-                    <button @onclick="() => AddStepAsync(stage)">Add step</button>
-                </div>
             </section>
         }
 
-        <div class="add-row">
+        <div class="add-row add-stage">
             <input @bind="_newStageName" placeholder="New stage name" />
             <button @onclick="AddStageAsync">Add stage</button>
         </div>
@@ -184,13 +298,23 @@ else
     private Workflow? _workflow;
     private bool _notFound;
     private string? _error;
+    private string? _saveStatus;
     private string _newStageName = string.Empty;
     private readonly Dictionary<int, string> _newStepNames = [];
     private readonly Dictionary<int, string> _newStationNames = [];
+    private readonly Dictionary<int, string> _newBranchLabels = [];
+    private readonly Dictionary<int, int?> _newBranchTargets = [];
     // Per-step "new input" draft (keyed by step id; seeded in LoadAsync for indexer @bind).
     private readonly Dictionary<int, string> _newInputLabels = [];
     private readonly Dictionary<int, StepInputType> _newInputTypes = [];
     private readonly Dictionary<int, bool> _newInputRequired = [];
+
+    // Progressive-disclosure state, keyed by entity id so it survives LoadAsync reloads.
+    private readonly HashSet<int> _expandedStages = [];
+    private readonly HashSet<int> _expandedSteps = [];
+    private readonly HashSet<int> _advancedStages = [];
+    private readonly HashSet<int> _advancedSteps = [];
+    private bool _entryModeExpanded;
 
     protected override async Task OnInitializedAsync()
     {
@@ -210,6 +334,8 @@ else
             {
                 _newStepNames.TryAdd(stage.Id, string.Empty);
                 _newStationNames.TryAdd(stage.Id, string.Empty);
+                _newBranchLabels.TryAdd(stage.Id, string.Empty);
+                _newBranchTargets.TryAdd(stage.Id, null);
                 foreach (var step in stage.Steps)
                 {
                     _newInputLabels.TryAdd(step.Id, string.Empty);
@@ -217,6 +343,38 @@ else
                     _newInputRequired.TryAdd(step.Id, false);
                 }
             }
+        }
+    }
+
+    private void ToggleStage(Stage stage)
+    {
+        if (!_expandedStages.Remove(stage.Id))
+        {
+            _expandedStages.Add(stage.Id);
+        }
+    }
+
+    private void ToggleStep(Step step)
+    {
+        if (!_expandedSteps.Remove(step.Id))
+        {
+            _expandedSteps.Add(step.Id);
+        }
+    }
+
+    private void ToggleStageAdvanced(Stage stage)
+    {
+        if (!_advancedStages.Remove(stage.Id))
+        {
+            _advancedStages.Add(stage.Id);
+        }
+    }
+
+    private void ToggleStepAdvanced(Step step)
+    {
+        if (!_advancedSteps.Remove(step.Id))
+        {
+            _advancedSteps.Add(step.Id);
         }
     }
 
@@ -314,6 +472,44 @@ else
         await LoadAsync();
     }
 
+    private async Task AddBranchAsync(Stage stage)
+    {
+        var label = _newBranchLabels.GetValueOrDefault(stage.Id, string.Empty);
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return;
+        }
+        var targetId = _newBranchTargets.GetValueOrDefault(stage.Id);
+        await RunAsync(() => Builder.AddStageBranchAsync(stage.Id, label.Trim(), targetId));
+        _newBranchLabels[stage.Id] = string.Empty;
+        _newBranchTargets[stage.Id] = null;
+        await LoadAsync();
+    }
+
+    private Task SaveBranchAsync(StageBranch branch) =>
+        RunAsync(() => Builder.UpdateStageBranchAsync(branch.Id, branch.Label, branch.TargetStageId));
+
+    private async Task DeleteBranchAsync(StageBranch branch)
+    {
+        await RunAsync(() => Builder.DeleteStageBranchAsync(branch.Id));
+        await LoadAsync();
+    }
+
+    private async Task MoveBranchAsync(Stage stage, StageBranch branch, int direction)
+    {
+        var ordered = stage.Branches.OrderBy(b => b.OrderIndex).Select(b => b.Id).ToList();
+        var index = ordered.IndexOf(branch.Id);
+        var swapWith = index + direction;
+        if (swapWith < 0 || swapWith >= ordered.Count)
+        {
+            return;
+        }
+
+        (ordered[index], ordered[swapWith]) = (ordered[swapWith], ordered[index]);
+        await RunAsync(() => Builder.ReorderStageBranchesAsync(stage.Id, ordered));
+        await LoadAsync();
+    }
+
     private Task SaveStepAsync(Step step) =>
         RunAsync(() => Builder.UpdateStepAsync(step.Id, step.Name, step.Instructions));
 
@@ -324,9 +520,17 @@ else
             return;
         }
 
+        var existing = _workflow!.Stages.Select(s => s.Id).ToHashSet();
         await RunAsync(() => Builder.AddStageAsync(_workflow!.Id, _newStageName.Trim()));
         _newStageName = string.Empty;
         await LoadAsync();
+
+        // Land the user directly in the stage they just created.
+        var added = _workflow!.Stages.FirstOrDefault(s => !existing.Contains(s.Id));
+        if (added is not null)
+        {
+            _expandedStages.Add(added.Id);
+        }
     }
 
     private async Task DeleteStageAsync(Stage stage)
@@ -358,9 +562,19 @@ else
             return;
         }
 
+        var existing = stage.Steps.Select(s => s.Id).ToHashSet();
         await RunAsync(() => Builder.AddStepAsync(stage.Id, name.Trim(), string.Empty));
         _newStepNames[stage.Id] = string.Empty;
         await LoadAsync();
+
+        // Expand the parent stage and land in the new step.
+        var reloaded = _workflow!.Stages.FirstOrDefault(s => s.Id == stage.Id);
+        var added = reloaded?.Steps.FirstOrDefault(s => !existing.Contains(s.Id));
+        if (added is not null)
+        {
+            _expandedStages.Add(stage.Id);
+            _expandedSteps.Add(added.Id);
+        }
     }
 
     private async Task DeleteStepAsync(Step step)
@@ -404,21 +618,26 @@ else
     private async Task RunAsync(Func<Task> action)
     {
         _error = null;
+        _saveStatus = "Saving…";
         try
         {
             await action();
+            _saveStatus = "All changes saved";
         }
         catch (WorkflowBuilderException ex)
         {
             _error = ex.Message;
+            _saveStatus = null;
         }
         catch (StationServiceException ex)
         {
             _error = ex.Message;
+            _saveStatus = null;
         }
         catch (IOException)
         {
             _error = "File too large (max 10 MB).";
+            _saveStatus = null;
         }
     }
 }

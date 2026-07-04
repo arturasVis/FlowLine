@@ -19,6 +19,9 @@ public class Stage
     public List<Step> Steps { get; set; } = [];
     public List<Station> Stations { get; set; } = [];
 
+    /// <summary>Routing choices offered at the end of this stage. Empty = linear (next stage by OrderIndex).</summary>
+    public List<StageBranch> Branches { get; set; } = [];
+
     /// <summary>WorkItems currently queued or in progress at this stage (CurrentStageId = this stage).</summary>
     public List<WorkItem> CurrentWorkItems { get; set; } = [];
 }

@@ -59,6 +59,15 @@ public interface IRelayService
     /// </summary>
     Task ScrapAsync(int workItemId, int? stationId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Routes a unit from a fork stage down the chosen branch, once every step of that stage is
+    /// done. The branch's target may be Finish (marks the unit Completed), a later stage, or an
+    /// earlier stage (a rework loop) — routing into a stage the unit has already passed resets that
+    /// stage so its steps are redone. Requires the station to hold the unit's claim; fails with
+    /// <see cref="RelayOperationException"/> otherwise, or if the stage's steps aren't all complete.
+    /// </summary>
+    Task<WorkItem> RouteAsync(int workItemId, int stationId, int branchId, CancellationToken cancellationToken = default);
+
     /// <summary>Number of WorkItems currently Queued at a stage (FR-15).</summary>
     Task<int> GetQueueDepthAsync(int stageId, CancellationToken cancellationToken = default);
 

@@ -53,22 +53,51 @@ builder.Services.AddAuthorization(options =>
 // not a code edit. Each provider has its own migrations assembly — SQLite's live in
 // FlowLine.Infrastructure, SQL Server's in FlowLine.Migrations.SqlServer — because one assembly
 // can only hold a single model snapshot per DbContext.
-var databaseProvider = builder.Configuration["DatabaseProvider"] ?? "Sqlite";
-var connectionString = builder.Configuration.GetConnectionString("FlowLine");
+//
+// Resilience: when DatabaseProvider is "SqlServer" but the server is unreachable (e.g. working
+// from home off the company network), the app automatically falls back to the local SQLite
+// database so it always starts.
+var requestedProvider = builder.Configuration["DatabaseProvider"] ?? "Sqlite";
+var sqlServerConnectionString = builder.Configuration.GetConnectionString("FlowLine");
+const string sqliteFallbackConnection = "Data Source=App_Data/flowline.db;Cache=Shared";
+
+// Probe SQL Server connectivity when it's the requested provider — a quick open/close tells us
+// whether the server is reachable without waiting for the full EF migration timeout.
+var activeDatabaseProvider = requestedProvider;
+if (requestedProvider.Equals("SqlServer", StringComparison.OrdinalIgnoreCase))
+{
+    try
+    {
+        using var probe = new Microsoft.Data.SqlClient.SqlConnection(sqlServerConnectionString);
+        probe.Open();
+        probe.Close();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[FlowLine] SQL Server is not reachable ({ex.Message}). " +
+                          $"Falling back to local SQLite database.");
+        activeDatabaseProvider = "Sqlite";
+    }
+}
+
+var activeConnectionString = activeDatabaseProvider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase)
+    ? sqliteFallbackConnection
+    : sqlServerConnectionString;
+
 builder.Services.AddDbContext<FlowLineDbContext>(options =>
 {
-    switch (databaseProvider.ToLowerInvariant())
+    switch (activeDatabaseProvider.ToLowerInvariant())
     {
         case "sqlserver":
-            options.UseSqlServer(connectionString,
+            options.UseSqlServer(activeConnectionString,
                 sql => sql.MigrationsAssembly("FlowLine.Migrations.SqlServer"));
             break;
         case "sqlite":
-            options.UseSqlite(connectionString);
+            options.UseSqlite(activeConnectionString);
             break;
         default:
             throw new InvalidOperationException(
-                $"Unknown DatabaseProvider '{databaseProvider}'. Use 'Sqlite' or 'SqlServer'.");
+                $"Unknown DatabaseProvider '{activeDatabaseProvider}'. Use 'Sqlite' or 'SqlServer'.");
     }
 });
 

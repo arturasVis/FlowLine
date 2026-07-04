@@ -24,6 +24,7 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
             .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.MediaAssets)
             .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.Inputs)
             .Include(w => w.Stages).ThenInclude(s => s.Stations)
+            .Include(w => w.Stages).ThenInclude(s => s.Branches)
             .AsSplitQuery()
             .SingleOrDefaultAsync(w => w.Id == workflowId, cancellationToken);
     }
@@ -84,6 +85,7 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         var source = await db.Workflows
             .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.MediaAssets)
             .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.Inputs)
+            .Include(w => w.Stages).ThenInclude(s => s.Branches)
             .AsSplitQuery()
             .SingleOrDefaultAsync(w => w.Id == workflowId, cancellationToken)
             ?? throw new WorkflowBuilderException($"Workflow {workflowId} does not exist.");
@@ -97,6 +99,9 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
             AllowAdHocStart = source.AllowAdHocStart,
         };
 
+        // Map each source stage to its clone so branch targets can be remapped after all stages exist.
+        var stageCloneBySourceId = new Dictionary<int, Stage>();
+
         foreach (var stage in source.Stages.OrderBy(s => s.OrderIndex))
         {
             var stageClone = new Stage
@@ -107,6 +112,7 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
                 RequiresScan = stage.RequiresScan,
             };
             clone.Stages.Add(stageClone);
+            stageCloneBySourceId[stage.Id] = stageClone;
 
             foreach (var step in stage.Steps.OrderBy(s => s.OrderIndex))
             {
@@ -145,6 +151,23 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
             }
         }
 
+        // Branches, now that every clone stage exists: remap each target to the clone stage (by
+        // navigation, so EF resolves the FK on save). Null target (Finish) copies across as null.
+        foreach (var stage in source.Stages)
+        {
+            var stageClone = stageCloneBySourceId[stage.Id];
+            foreach (var branch in stage.Branches.OrderBy(b => b.OrderIndex))
+            {
+                stageClone.Branches.Add(new StageBranch
+                {
+                    Stage = stageClone,
+                    Label = branch.Label,
+                    OrderIndex = branch.OrderIndex,
+                    TargetStage = branch.TargetStageId is null ? null : stageCloneBySourceId[branch.TargetStageId.Value],
+                });
+            }
+        }
+
         db.Workflows.Add(clone);
         await db.SaveChangesAsync(cancellationToken);
         return clone;
@@ -180,6 +203,85 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
             ?? throw new WorkflowBuilderException($"Stage {stageId} does not exist.");
         stage.RequiresScan = requiresScan;
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<StageBranch> AddStageBranchAsync(int stageId, string label, int? targetStageId, CancellationToken cancellationToken = default)
+    {
+        var stage = await db.Stages.FindAsync([stageId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Stage {stageId} does not exist.");
+
+        label = (label ?? string.Empty).Trim();
+        if (label.Length == 0)
+        {
+            throw new WorkflowBuilderException("A branch needs a label.");
+        }
+        await ValidateBranchTargetAsync(stage.WorkflowId, targetStageId, cancellationToken);
+
+        var maxOrder = await db.StageBranches
+            .Where(b => b.StageId == stageId)
+            .Select(b => (int?)b.OrderIndex)
+            .MaxAsync(cancellationToken) ?? -1;
+
+        var branch = new StageBranch { StageId = stageId, Label = label, TargetStageId = targetStageId, OrderIndex = maxOrder + 1 };
+        db.StageBranches.Add(branch);
+        await db.SaveChangesAsync(cancellationToken);
+        return branch;
+    }
+
+    public async Task UpdateStageBranchAsync(int branchId, string label, int? targetStageId, CancellationToken cancellationToken = default)
+    {
+        var branch = await db.StageBranches.Include(b => b.Stage).SingleOrDefaultAsync(b => b.Id == branchId, cancellationToken)
+            ?? throw new WorkflowBuilderException($"Branch {branchId} does not exist.");
+
+        label = (label ?? string.Empty).Trim();
+        if (label.Length == 0)
+        {
+            throw new WorkflowBuilderException("A branch needs a label.");
+        }
+        await ValidateBranchTargetAsync(branch.Stage.WorkflowId, targetStageId, cancellationToken);
+
+        branch.Label = label;
+        branch.TargetStageId = targetStageId;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeleteStageBranchAsync(int branchId, CancellationToken cancellationToken = default)
+    {
+        var branch = await db.StageBranches.FindAsync([branchId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Branch {branchId} does not exist.");
+        db.StageBranches.Remove(branch);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ReorderStageBranchesAsync(int stageId, IReadOnlyList<int> orderedBranchIds, CancellationToken cancellationToken = default)
+    {
+        var branches = await db.StageBranches.Where(b => b.StageId == stageId).ToListAsync(cancellationToken);
+
+        if (branches.Count != orderedBranchIds.Count || !branches.Select(b => b.Id).ToHashSet().SetEquals(orderedBranchIds))
+        {
+            throw new WorkflowBuilderException("Reorder must include every branch on the stage exactly once.");
+        }
+
+        for (var i = 0; i < orderedBranchIds.Count; i++)
+        {
+            branches.Single(b => b.Id == orderedBranchIds[i]).OrderIndex = i;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // A branch target is either Finish (null) or a stage in the same workflow.
+    private async Task ValidateBranchTargetAsync(int workflowId, int? targetStageId, CancellationToken cancellationToken)
+    {
+        if (targetStageId is null)
+        {
+            return;
+        }
+        var ok = await db.Stages.AnyAsync(s => s.Id == targetStageId && s.WorkflowId == workflowId, cancellationToken);
+        if (!ok)
+        {
+            throw new WorkflowBuilderException("A branch can only target a stage in the same workflow.");
+        }
     }
 
     public async Task DeleteStageAsync(int stageId, CancellationToken cancellationToken = default)

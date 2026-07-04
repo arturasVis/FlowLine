@@ -61,6 +61,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         var workItem = await db.WorkItems
             .Include(wi => wi.StepCompletions)
             .Include(wi => wi.CurrentStage).ThenInclude(s => s.Steps).ThenInclude(st => st.Inputs)
+            .Include(wi => wi.CurrentStage).ThenInclude(s => s.Branches)
             .Include(wi => wi.Workflow).ThenInclude(w => w.Stages)
             .SingleOrDefaultAsync(wi => wi.Id == workItemId, cancellationToken)
             ?? throw new RelayOperationException($"WorkItem {workItemId} does not exist.");
@@ -137,26 +138,31 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
 
         if (nextStep.Id == orderedSteps[^1].Id)
         {
-            var nextStage = workItem.Workflow.Stages
-                .Where(s => s.OrderIndex > stage.OrderIndex)
-                .OrderBy(s => s.OrderIndex)
-                .FirstOrDefault();
-
-            if (nextStage is null)
+            if (stage.Branches.Count > 0)
             {
-                workItem.Status = WorkItemStatus.Completed;
-                workItem.ClaimedByStationId = null;
-                workItem.ClaimedAtUtc = null;
-                outcome = AdvanceOutcome.Completed;
+                // Fork: the stage's work is done, but where the unit goes is the operator's choice.
+                // Keep it claimed here and wait for RouteAsync — don't auto-hand-off.
+                outcome = AdvanceOutcome.AwaitingRoute;
             }
             else
             {
-                workItem.CurrentStageId = nextStage.Id;
-                workItem.Status = WorkItemStatus.Queued;
-                workItem.ClaimedByStationId = null;
-                workItem.ClaimedAtUtc = null;
-                workItem.QueuedAtUtc = DateTime.UtcNow;
-                outcome = AdvanceOutcome.HandedOff;
+                var nextStage = workItem.Workflow.Stages
+                    .Where(s => s.OrderIndex > stage.OrderIndex)
+                    .OrderBy(s => s.OrderIndex)
+                    .FirstOrDefault();
+
+                if (nextStage is null)
+                {
+                    workItem.Status = WorkItemStatus.Completed;
+                    workItem.ClaimedByStationId = null;
+                    workItem.ClaimedAtUtc = null;
+                    outcome = AdvanceOutcome.Completed;
+                }
+                else
+                {
+                    await MoveToStageAsync(workItem, nextStage.Id, cancellationToken);
+                    outcome = AdvanceOutcome.HandedOff;
+                }
             }
         }
 
@@ -267,6 +273,79 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         return workItem;
     }
 
+    // Moves a unit into a stage's queue, *resetting* that stage: any StepCompletions this unit
+    // already recorded there (from an earlier pass through a rework loop) are deleted so the work
+    // is redone (their StepCompletionValues cascade). A first-time entry has none, so this is a
+    // no-op then. The caller saves inside its own transaction.
+    private async Task MoveToStageAsync(WorkItem workItem, int targetStageId, CancellationToken cancellationToken)
+    {
+        var targetStepIds = await db.Steps
+            .Where(s => s.StageId == targetStageId)
+            .Select(s => s.Id)
+            .ToListAsync(cancellationToken);
+        var stale = await db.StepCompletions
+            .Where(sc => sc.WorkItemId == workItem.Id && targetStepIds.Contains(sc.StepId))
+            .ToListAsync(cancellationToken);
+        if (stale.Count > 0)
+        {
+            db.StepCompletions.RemoveRange(stale);
+        }
+
+        workItem.CurrentStageId = targetStageId;
+        workItem.Status = WorkItemStatus.Queued;
+        workItem.ClaimedByStationId = null;
+        workItem.ClaimedAtUtc = null;
+        workItem.QueuedAtUtc = DateTime.UtcNow;
+    }
+
+    public async Task<WorkItem> RouteAsync(int workItemId, int stationId, int branchId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var workItem = await db.WorkItems
+            .Include(wi => wi.StepCompletions)
+            .Include(wi => wi.CurrentStage).ThenInclude(s => s.Steps)
+            .Include(wi => wi.CurrentStage).ThenInclude(s => s.Branches)
+            .SingleOrDefaultAsync(wi => wi.Id == workItemId, cancellationToken)
+            ?? throw new RelayOperationException($"WorkItem {workItemId} does not exist.");
+
+        if (workItem.Status != WorkItemStatus.InProgress)
+        {
+            throw new RelayOperationException($"WorkItem {workItemId} is not in progress (status: {workItem.Status}).");
+        }
+        if (workItem.ClaimedByStationId != stationId)
+        {
+            throw new RelayOperationException($"WorkItem {workItemId} is not claimed by station {stationId}.");
+        }
+
+        var branch = workItem.CurrentStage.Branches.FirstOrDefault(b => b.Id == branchId)
+            ?? throw new RelayOperationException("That branch isn't offered at this stage.");
+
+        // A branch is only chosen once the stage's work is done.
+        var completedStepIds = workItem.StepCompletions.Select(sc => sc.StepId).ToHashSet();
+        if (workItem.CurrentStage.Steps.Any(s => !completedStepIds.Contains(s.Id)))
+        {
+            throw new RelayOperationException("Finish the stage's steps before choosing a branch.");
+        }
+
+        if (branch.TargetStageId is null)
+        {
+            workItem.Status = WorkItemStatus.Completed;
+            workItem.ClaimedByStationId = null;
+            workItem.ClaimedAtUtc = null;
+        }
+        else
+        {
+            await MoveToStageAsync(workItem, branch.TargetStageId.Value, cancellationToken);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        notifier.NotifyStageChanged(workItem.CurrentStageId);
+        return workItem;
+    }
+
     private static DateTime? Max(DateTime? a, DateTime? b) =>
         a is null ? b : b is null ? a : (a > b ? a : b);
 
@@ -283,6 +362,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             .Include(s => s.Stage).ThenInclude(st => st.Workflow).ThenInclude(w => w.Stages)
             .Include(s => s.Stage).ThenInclude(st => st.Steps).ThenInclude(step => step.MediaAssets)
             .Include(s => s.Stage).ThenInclude(st => st.Steps).ThenInclude(step => step.Inputs)
+            .Include(s => s.Stage).ThenInclude(st => st.Branches)
             .AsSplitQuery()
             .SingleOrDefaultAsync(s => s.Id == stationId, cancellationToken);
     }

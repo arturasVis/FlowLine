@@ -161,6 +161,21 @@ else
                     Advance@(_currentStep.Inputs.Count == 0 ? " (Enter)" : "")
                 </button>
             }
+            else if (_station.Stage.Branches.Count > 0)
+            {
+                <div class="routing-fork">
+                    <h2>Select Next Destination</h2>
+                    <p class="instructions">All steps completed. Choose where to route this unit:</p>
+                    <div class="branch-buttons">
+                        @foreach (var branch in _station.Stage.Branches.OrderBy(b => b.OrderIndex))
+                        {
+                            <button class="advance branch-btn" @onclick="() => RouteAsync(branch.Id)" disabled="@_advancing">
+                                @branch.Label
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
 
             <div class="unit-actions">
                 <button class="unit-action" @onclick="ReleaseAsync" disabled="@_advancing"
@@ -265,19 +280,44 @@ else
         _station is not null && _activeWorkItem is null
         && _station.Stage.RequiresScan && !ShowPrebuildScan && !ShowAdHocStart;
 
+    // Tracks which station we've actually loaded data for. When Blazor reuses this component
+    // during enhanced navigation (e.g. /station/2 → /station/3), StationId changes but
+    // OnInitializedAsync doesn't re-run — OnParametersSetAsync does.
+    private int _loadedStationId;
+
     protected override async Task OnInitializedAsync()
     {
         Notifier.StageChanged += OnStageChanged;
+        await LoadStationAsync();
+    }
 
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedStationId != 0 && _loadedStationId != StationId)
+        {
+            await LoadStationAsync();
+        }
+    }
+
+    private async Task LoadStationAsync()
+    {
         await _dbGate.WaitAsync();
         try
         {
+            _notFound = false;
+            _errorMessage = null;
+            _activeWorkItem = null;
+            _currentStep = null;
+            _holdAutoClaim = false;
+
             _station = await Relay.GetStationAsync(StationId);
             if (_station is null)
             {
                 _notFound = true;
                 return;
             }
+
+            _loadedStationId = StationId;
 
             var user = AuthState is null ? null : (await AuthState).User;
             _staffNumber = user?.GetStaffNumber() is int n and > 0 ? n : null;
@@ -331,6 +371,10 @@ else
         {
             return;
         }
+
+        // Clear stale errors so they don't persist across station transitions or
+        // notification-driven refreshes.
+        _errorMessage = null;
 
         _activeWorkItem = await Relay.GetActiveWorkItemAsync(_station.Id);
 
@@ -647,6 +691,33 @@ else
         }
     }
 
+    private async Task RouteAsync(int branchId)
+    {
+        if (_advancing || _activeWorkItem is null || _station is null)
+        {
+            return;
+        }
+
+        _advancing = true;
+        _errorMessage = null;
+        await _dbGate.WaitAsync();
+        try
+        {
+            await Relay.RouteAsync(_activeWorkItem.Id, _station.Id, branchId);
+            await RefreshAsync();
+            _focusRootPending = true;
+        }
+        catch (RelayOperationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _dbGate.Release();
+            _advancing = false;
+        }
+    }
+
     private void OnStageChanged(int stageId)
     {
         if (_station is null || stageId != _station.StageId)
@@ -656,7 +727,20 @@ else
 
         _ = InvokeAsync(() => RunGuardedAsync(async () =>
         {
-            await RefreshAsync();
+            try
+            {
+                await RefreshAsync();
+            }
+            catch (RelayOperationException)
+            {
+                // Transient race: the notification arrived but the work item's state changed
+                // between our read and the auto-claim attempt. A subsequent notification or
+                // manual refresh will reconcile.
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Another station won the claim race — silently retry on next notification.
+            }
             StateHasChanged();
         }));
     }

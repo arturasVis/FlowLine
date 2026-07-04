@@ -12,6 +12,10 @@ public enum AdvanceOutcome
 
     /// <summary>The final stage's last step was completed; the WorkItem is now Completed.</summary>
     Completed,
+
+    /// <summary>The stage's last step was completed, but the stage is a fork — the WorkItem stays
+    /// claimed at the stage until the operator picks a branch (see <see cref="IRelayService.RouteAsync"/>).</summary>
+    AwaitingRoute,
 }
 
 public record AdvanceResult(AdvanceOutcome Outcome, WorkItem WorkItem, Step CompletedStep);

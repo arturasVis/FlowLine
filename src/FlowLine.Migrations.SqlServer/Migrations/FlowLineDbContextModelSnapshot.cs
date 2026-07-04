@@ -162,6 +162,36 @@ namespace FlowLine.Migrations.SqlServer.Migrations
                     b.ToTable("Stages");
                 });
 
+            modelBuilder.Entity("FlowLine.Domain.Entities.StageBranch", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("OrderIndex")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StageId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("TargetStageId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StageId");
+
+                    b.HasIndex("TargetStageId");
+
+                    b.ToTable("StageBranches");
+                });
+
             modelBuilder.Entity("FlowLine.Domain.Entities.Station", b =>
                 {
                     b.Property<int>("Id")
@@ -442,6 +472,24 @@ namespace FlowLine.Migrations.SqlServer.Migrations
                     b.Navigation("Workflow");
                 });
 
+            modelBuilder.Entity("FlowLine.Domain.Entities.StageBranch", b =>
+                {
+                    b.HasOne("FlowLine.Domain.Entities.Stage", "Stage")
+                        .WithMany("Branches")
+                        .HasForeignKey("StageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FlowLine.Domain.Entities.Stage", "TargetStage")
+                        .WithMany()
+                        .HasForeignKey("TargetStageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Stage");
+
+                    b.Navigation("TargetStage");
+                });
+
             modelBuilder.Entity("FlowLine.Domain.Entities.Station", b =>
                 {
                     b.HasOne("FlowLine.Domain.Entities.Stage", "Stage")
@@ -559,6 +607,8 @@ namespace FlowLine.Migrations.SqlServer.Migrations
 
             modelBuilder.Entity("FlowLine.Domain.Entities.Stage", b =>
                 {
+                    b.Navigation("Branches");
+
                     b.Navigation("CurrentWorkItems");
 
                     b.Navigation("Stations");

@@ -48,6 +48,16 @@ public interface IWorkflowBuilderService
     /// <summary>Toggles scan-to-claim for a stage. Scan-required stages do not auto-claim from their queue.</summary>
     Task SetStageRequiresScanAsync(int stageId, bool requiresScan, CancellationToken cancellationToken = default);
 
+    /// <summary>Adds a routing branch (operator button) to a stage. targetStageId null = Finish; otherwise a stage in the same workflow.</summary>
+    Task<StageBranch> AddStageBranchAsync(int stageId, string label, int? targetStageId, CancellationToken cancellationToken = default);
+
+    Task UpdateStageBranchAsync(int branchId, string label, int? targetStageId, CancellationToken cancellationToken = default);
+
+    Task DeleteStageBranchAsync(int branchId, CancellationToken cancellationToken = default);
+
+    /// <summary>Reassigns OrderIndex 0..N-1 to match the given order. Must include every branch on the stage exactly once.</summary>
+    Task ReorderStageBranchesAsync(int stageId, IReadOnlyList<int> orderedBranchIds, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Throws <see cref="WorkflowBuilderException"/> if the stage still has WorkItems on it
     /// or its steps have recorded StepCompletions (the FK Restrict guard tripped).

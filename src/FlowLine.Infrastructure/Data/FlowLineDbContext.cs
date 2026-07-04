@@ -16,6 +16,7 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
     public DbSet<StepCompletion> StepCompletions => Set<StepCompletion>();
     public DbSet<StepInput> StepInputs => Set<StepInput>();
     public DbSet<StepCompletionValue> StepCompletionValues => Set<StepCompletionValue>();
+    public DbSet<StageBranch> StageBranches => Set<StageBranch>();
     public DbSet<WorkflowAssignment> WorkflowAssignments => Set<WorkflowAssignment>();
 
     // Company-owned, pre-existing tables (SQL Server deployment only). Mapped read-only and
@@ -58,6 +59,22 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
             .WithOne(st => st.Stage)
             .HasForeignKey(st => st.StageId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // A stage's branch options are owned by it (cascade on delete). The branch *target* is a
+        // second FK to Stage — NoAction/Restrict, both to avoid the multiple-cascade-path cycle SQL
+        // Server rejects and to keep a stage that others branch *to* from being silently deleted
+        // (the builder's delete-stage guard reports it). TargetStageId null = Finish.
+        modelBuilder.Entity<Stage>()
+            .HasMany(s => s.Branches)
+            .WithOne(b => b.Stage)
+            .HasForeignKey(b => b.StageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<StageBranch>()
+            .HasOne(b => b.TargetStage)
+            .WithMany()
+            .HasForeignKey(b => b.TargetStageId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // Instance side: restrict deletes that would silently destroy WorkItem/timing
         // history out from under a still-referenced Workflow, Stage, or Step.
