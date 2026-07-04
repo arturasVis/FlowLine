@@ -80,9 +80,20 @@ public interface IRelayService
     /// sources, in priority order: a WorkItem already Queued at this entry stage with that
     /// OrderNumber (authored on the Orders screen or imported) is claimed to the scanning
     /// station; otherwise the ID is looked up in the company History table (matched on
-    /// OrderId) and a new WorkItem inheriting that row's SKU/qty/channel is created already
-    /// claimed. Fails with <see cref="RelayOperationException"/> if the ID matches neither, the
-    /// station isn't the workflow's first stage, or that order is already being worked on.
+    /// OrderId), History.Qty physical-unit WorkItems are created (Quantity = 1 each), and one
+    /// is returned already claimed. Fails with <see cref="RelayOperationException"/> if the ID
+    /// matches neither, the station isn't the workflow's first stage, or that order is already
+    /// being worked on with no entry-queued unit left to claim.
     /// </summary>
     Task<WorkItem> CreateFromPrebuildAsync(int stationId, string prebuildId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Starts a fresh unit at an ad-hoc (free-run) workflow's first station: creates a WorkItem with
+    /// a generated run number, already claimed and InProgress at the scanning station, so the
+    /// operator begins immediately and the steps are timed like any other unit. For routines/training
+    /// workflows (<see cref="Workflow.AllowAdHocStart"/>) that have no premade orders. Fails with
+    /// <see cref="RelayOperationException"/> if the station isn't the workflow's first stage or the
+    /// workflow isn't in ad-hoc mode.
+    /// </summary>
+    Task<WorkItem> StartAdHocAsync(int stationId, CancellationToken cancellationToken = default);
 }

@@ -3,6 +3,9 @@ bin/
 obj/
 out/
 
+# Deployment output (contains the production connection string — never commit)
+deploy/
+
 # Visual Studio / Rider / VS Code
 .vs/
 .vscode/
@@ -26,5 +29,5 @@ src/FlowLine.Web/wwwroot/media/*
 .DS_Store
 Thumbs.db
 
-# Claude Code local settings (machine-specific, not shared)
-.claude/settings.local.json
+# Claude Code local tooling/config (machine-specific, not shared)
+.claude/

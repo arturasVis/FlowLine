@@ -52,6 +52,24 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         var workflow = await db.Workflows.FindAsync([workflowId], cancellationToken)
             ?? throw new WorkflowBuilderException($"Workflow {workflowId} does not exist.");
         workflow.RequiresPrebuild = requiresPrebuild;
+        // Both flags change how the entry stage gets work — they can't be on at once.
+        if (requiresPrebuild)
+        {
+            workflow.AllowAdHocStart = false;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task SetWorkflowAllowAdHocStartAsync(int workflowId, bool allowAdHocStart, CancellationToken cancellationToken = default)
+    {
+        var workflow = await db.Workflows.FindAsync([workflowId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Workflow {workflowId} does not exist.");
+        workflow.AllowAdHocStart = allowAdHocStart;
+        // Both flags change how the entry stage gets work — they can't be on at once.
+        if (allowAdHocStart)
+        {
+            workflow.RequiresPrebuild = false;
+        }
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -63,7 +81,14 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
             .SingleOrDefaultAsync(w => w.Id == workflowId, cancellationToken)
             ?? throw new WorkflowBuilderException($"Workflow {workflowId} does not exist.");
 
-        var clone = new Workflow { Name = newName, Description = source.Description, IsActive = true };
+        var clone = new Workflow
+        {
+            Name = newName,
+            Description = source.Description,
+            IsActive = true,
+            RequiresPrebuild = source.RequiresPrebuild,
+            AllowAdHocStart = source.AllowAdHocStart,
+        };
 
         foreach (var stage in source.Stages.OrderBy(s => s.OrderIndex))
         {

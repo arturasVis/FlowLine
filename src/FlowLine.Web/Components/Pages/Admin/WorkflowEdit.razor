@@ -30,6 +30,11 @@ else
             Requires a prebuild ID scanned at step 1
         </label>
 
+        <label class="prebuild-toggle">
+            <input type="checkbox" checked="@_workflow.AllowAdHocStart" @onchange="ToggleAdHocAsync" />
+            Free-run / training mode — start runs without an order (entry station gets a "Start run" button)
+        </label>
+
         @if (_error is not null)
         {
             <p class="error">@_error</p>
@@ -125,7 +130,22 @@ else
     private async Task TogglePrebuildAsync(ChangeEventArgs e)
     {
         _workflow!.RequiresPrebuild = e.Value is true;
+        // The two entry-mode flags are mutually exclusive; reflect the server-side clear locally.
+        if (_workflow.RequiresPrebuild)
+        {
+            _workflow.AllowAdHocStart = false;
+        }
         await RunAsync(() => Builder.SetWorkflowRequiresPrebuildAsync(_workflow.Id, _workflow.RequiresPrebuild));
+    }
+
+    private async Task ToggleAdHocAsync(ChangeEventArgs e)
+    {
+        _workflow!.AllowAdHocStart = e.Value is true;
+        if (_workflow.AllowAdHocStart)
+        {
+            _workflow.RequiresPrebuild = false;
+        }
+        await RunAsync(() => Builder.SetWorkflowAllowAdHocStartAsync(_workflow.Id, _workflow.AllowAdHocStart));
     }
 
     private Task SaveStageAsync(Stage stage) =>

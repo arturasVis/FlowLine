@@ -44,6 +44,17 @@ else
                     }
                 </div>
             }
+            else if (ShowAdHocStart)
+            {
+                <div class="idle">
+                    <p>Free-run workflow — start a run to do and time the steps.</p>
+                    <button class="advance" @onclick="StartAdHocAsync" disabled="@_advancing">Start run (Enter)</button>
+                    @if (_errorMessage is not null)
+                    {
+                        <p class="error">@_errorMessage</p>
+                    }
+                </div>
+            }
             else if (_holdAutoClaim)
             {
                 <div class="idle">
@@ -167,6 +178,12 @@ else
     private string? _errorMessage;
     private ElementReference _rootElement;
 
+    // The scoped RelayService (and its DbContext) is shared with the fire-and-forget refresh that
+    // OnStageChanged kicks off. On a higher-latency provider (SQL Server) that refresh can overlap
+    // an in-flight action and EF throws "a second operation was started on this context instance".
+    // This gate serializes every DbContext-touching sequence so at most one runs at a time.
+    private readonly SemaphoreSlim _dbGate = new(1, 1);
+
     private string _prebuildEntry = string.Empty;
     private ElementReference _prebuildInput;
     private bool _prebuildInputFocused;
@@ -200,31 +217,47 @@ else
         _station is not null && _activeWorkItem is null
         && _station.Stage.Workflow.RequiresPrebuild && IsEntryStage;
 
+    // A free-run workflow's entry station, sitting idle, offers a "Start run" button — units in
+    // these workflows are born from the button, not a queue.
+    private bool ShowAdHocStart =>
+        _station is not null && _activeWorkItem is null
+        && _station.Stage.Workflow.AllowAdHocStart && IsEntryStage;
+
     protected override async Task OnInitializedAsync()
     {
         Notifier.StageChanged += OnStageChanged;
 
-        _station = await Relay.GetStationAsync(StationId);
-        if (_station is null)
+        // Hold the gate across the whole load: the StageChanged subscription is already live, so a
+        // notify from another circuit could otherwise refresh this component's DbContext mid-load.
+        await _dbGate.WaitAsync();
+        try
         {
-            _notFound = true;
-            return;
-        }
-
-        // URL-guard: a level-1 operator can only run stations of a workflow assigned to them.
-        var user = AuthState is null ? null : (await AuthState).User;
-        _staffNumber = user?.GetStaffNumber() is int n and > 0 ? n : null;
-        if (user is not null && user.GetLevel() <= AccessLevel.Staff)
-        {
-            var assigned = await Assignments.GetAssignedWorkflowIdsAsync(user.GetStaffNumber());
-            if (!assigned.Contains(_station.Stage.WorkflowId))
+            _station = await Relay.GetStationAsync(StationId);
+            if (_station is null)
             {
-                Nav.NavigateTo("/");
+                _notFound = true;
                 return;
             }
-        }
 
-        await RefreshAsync();
+            // URL-guard: a level-1 operator can only run stations of a workflow assigned to them.
+            var user = AuthState is null ? null : (await AuthState).User;
+            _staffNumber = user?.GetStaffNumber() is int n and > 0 ? n : null;
+            if (user is not null && user.GetLevel() <= AccessLevel.Staff)
+            {
+                var assigned = await Assignments.GetAssignedWorkflowIdsAsync(user.GetStaffNumber());
+                if (!assigned.Contains(_station.Stage.WorkflowId))
+                {
+                    Nav.NavigateTo("/");
+                    return;
+                }
+            }
+
+            await RefreshAsync();
+        }
+        finally
+        {
+            _dbGate.Release();
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -266,13 +299,13 @@ else
 
         _activeWorkItem = await Relay.GetActiveWorkItemAsync(_station.Id);
 
-        // A prebuild entry station doesn't auto-claim from a queue — its units come from scans.
-        // Every other station pulls the next queued unit as before — unless the operator just
-        // released a unit here (_holdAutoClaim), in which case pausing is the whole point:
-        // without it, this station would win the race and grab the released unit right back.
-        if (_activeWorkItem is null
-            && !_holdAutoClaim
-            && !(_station.Stage.Workflow.RequiresPrebuild && IsEntryStage))
+        // A prebuild/free-run entry station doesn't auto-claim from a queue — its units come from the
+        // scan or the Start-run button. Every other station pulls the next queued unit as before —
+        // unless the operator just released a unit here (_holdAutoClaim), in which case pausing is the
+        // whole point: without it, this station would win the race and grab the released unit right back.
+        var entryStationNoAutoClaim =
+            IsEntryStage && (_station.Stage.Workflow.RequiresPrebuild || _station.Stage.Workflow.AllowAdHocStart);
+        if (_activeWorkItem is null && !_holdAutoClaim && !entryStationNoAutoClaim)
         {
             _activeWorkItem = await Relay.ClaimNextAsync(_station.Id);
         }
@@ -315,6 +348,11 @@ else
             await ResumeAsync();
             return;
         }
+        if (ShowAdHocStart)
+        {
+            await StartAdHocAsync();
+            return;
+        }
         if (_currentStep?.RequiresScan == true)
         {
             return; // scan-required steps only advance from the scan box
@@ -334,7 +372,7 @@ else
     private async Task ResumeAsync()
     {
         _holdAutoClaim = false;
-        await RefreshAsync();
+        await RunGuardedAsync(RefreshAsync);
     }
 
     private async Task ReleaseAsync()
@@ -387,6 +425,7 @@ else
 
         _advancing = true;
         _errorMessage = null;
+        await _dbGate.WaitAsync();
         try
         {
             await action();
@@ -403,6 +442,7 @@ else
         }
         finally
         {
+            _dbGate.Release();
             _advancing = false;
         }
     }
@@ -425,6 +465,7 @@ else
 
         _advancing = true;
         _errorMessage = null;
+        await _dbGate.WaitAsync();
         try
         {
             await Relay.CreateFromPrebuildAsync(_station.Id, _prebuildEntry);
@@ -438,6 +479,33 @@ else
         }
         finally
         {
+            _dbGate.Release();
+            _advancing = false;
+        }
+    }
+
+    private async Task StartAdHocAsync()
+    {
+        if (_advancing || _station is null)
+        {
+            return;
+        }
+
+        _advancing = true;
+        _errorMessage = null;
+        await _dbGate.WaitAsync();
+        try
+        {
+            await Relay.StartAdHocAsync(_station.Id);
+            await RefreshAsync();
+        }
+        catch (RelayOperationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _dbGate.Release();
             _advancing = false;
         }
     }
@@ -455,6 +523,7 @@ else
 
         _advancing = true;
         _errorMessage = null;
+        await _dbGate.WaitAsync();
         try
         {
             var scanned = _currentStep?.RequiresScan == true ? _stepScanEntry : null;
@@ -477,6 +546,7 @@ else
         }
         finally
         {
+            _dbGate.Release();
             _advancing = false;
         }
     }
@@ -488,16 +558,33 @@ else
             return;
         }
 
-        _ = InvokeAsync(async () =>
+        _ = InvokeAsync(() => RunGuardedAsync(async () =>
         {
             await RefreshAsync();
             StateHasChanged();
-        });
+        }));
+    }
+
+    // Runs DbContext-touching work under the shared gate so it can't overlap another sequence on
+    // the same scoped DbContext (see _dbGate). RefreshAsync itself never takes the gate, so callers
+    // already holding it must not route through here.
+    private async Task RunGuardedAsync(Func<Task> work)
+    {
+        await _dbGate.WaitAsync();
+        try
+        {
+            await work();
+        }
+        finally
+        {
+            _dbGate.Release();
+        }
     }
 
     public ValueTask DisposeAsync()
     {
         Notifier.StageChanged -= OnStageChanged;
+        _dbGate.Dispose();
         return ValueTask.CompletedTask;
     }
 }

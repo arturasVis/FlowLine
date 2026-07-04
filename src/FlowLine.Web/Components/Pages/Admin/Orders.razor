@@ -46,48 +46,74 @@
         <table class="workflow-table">
             <thead>
                 <tr>
+                    <th></th>
                     <th>Order #</th>
                     <th>SKU</th>
-                    <th>Qty</th>
+                    <th>Units</th>
                     <th>Channel</th>
                     <th>Workflow</th>
-                    <th>Current stage</th>
-                    <th>Status</th>
-                    <th>Claimed by</th>
+                    <th>Progress</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var workItem in _workItems)
+                @foreach (var group in _groups!)
                 {
-                    <tr>
-                        <td><span class="mono">@workItem.OrderNumber</span></td>
-                        <td><span class="mono">@workItem.Sku</span></td>
-                        <td>@workItem.Quantity</td>
-                        <td>@workItem.Channel</td>
-                        <td>@workItem.Workflow.Name</td>
-                        <td>@workItem.CurrentStage.Name</td>
-                        <td>
-                            <span class="status-pill @StatusClass(workItem.Status)">
-                                <span class="status-dot"></span>@StatusLabel(workItem.Status)
-                            </span>
-                        </td>
-                        <td>@(workItem.ClaimedByStation?.Name ?? "—")</td>
+                    var expanded = _expandedGroups.Contains(group.Key);
+                    <tr class="order-group-row" @onclick="() => ToggleGroup(group.Key)">
+                        <td>@(group.Units.Count > 1 ? (expanded ? "▾" : "▸") : "")</td>
+                        <td><span class="mono">@group.OrderNumber</span></td>
+                        <td><span class="mono">@group.Sku</span></td>
+                        <td>@group.Units.Count</td>
+                        <td>@group.Channel</td>
+                        <td>@group.WorkflowName</td>
+                        <td>@group.Summary</td>
                         <td class="order-actions">
-                            @if (workItem.Status == WorkItemStatus.InProgress)
+                            @if (group.AnyActive)
                             {
-                                <button class="unit-action" title="Free the claim — the unit re-queues at the back of its stage (progress kept)"
-                                        @onclick="() => ReleaseAsync(workItem)">Release</button>
+                                <button class="unit-action" title="Free every in-progress unit in this order"
+                                        @onclick:stopPropagation="true" @onclick="() => ReleaseGroupAsync(group)">Release all</button>
                             }
-                            @if (workItem.Status is WorkItemStatus.Queued or WorkItemStatus.InProgress)
+                            @if (group.AnyOpen)
                             {
-                                <button class="unit-action scrap" title="Void this order — it leaves the line and can be re-imported/scanned"
-                                        @onclick="() => CancelAsync(workItem)">
-                                    @(_confirmCancelId == workItem.Id ? "Confirm?" : "Cancel")
+                                <button class="unit-action scrap" title="Void every open unit in this order"
+                                        @onclick:stopPropagation="true" @onclick="() => CancelGroupAsync(group)">
+                                    @(_confirmCancelKey == group.Key ? "Confirm?" : "Cancel all")
                                 </button>
                             }
                         </td>
                     </tr>
+                    @if (expanded && group.Units.Count > 1)
+                    {
+                        @foreach (var workItem in group.Units)
+                        {
+                            <tr class="order-unit-row">
+                                <td></td>
+                                <td colspan="2" class="unit-label">Unit #@(group.Units.IndexOf(workItem) + 1)</td>
+                                <td></td>
+                                <td></td>
+                                <td>@workItem.CurrentStage.Name</td>
+                                <td>
+                                    <span class="status-pill @StatusClass(workItem.Status)">
+                                        <span class="status-dot"></span>@StatusLabel(workItem.Status)
+                                    </span>
+                                    @(workItem.ClaimedByStation is not null ? $" @ {workItem.ClaimedByStation.Name}" : "")
+                                </td>
+                                <td class="order-actions">
+                                    @if (workItem.Status == WorkItemStatus.InProgress)
+                                    {
+                                        <button class="unit-action" @onclick="() => ReleaseAsync(workItem)">Release</button>
+                                    }
+                                    @if (workItem.Status is WorkItemStatus.Queued or WorkItemStatus.InProgress)
+                                    {
+                                        <button class="unit-action scrap" @onclick="() => CancelAsync(workItem)">
+                                            @(_confirmCancelId == workItem.Id ? "Confirm?" : "Cancel")
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
                 }
             </tbody>
         </table>
@@ -97,12 +123,42 @@
 @code {
     private List<Workflow>? _workflows;
     private List<WorkItem>? _workItems;
+    private List<OrderGroup>? _groups;
+    private readonly HashSet<string> _expandedGroups = new();
+    private string? _confirmCancelKey;
     private int _workflowId;
     private string _orderNumber = string.Empty;
     private string _sku = string.Empty;
     private int _quantity = 1;
     private string _channel = string.Empty;
     private string? _error;
+
+    // A batch of units sharing an order number + workflow (a QTY-N order is N WorkItems).
+    private sealed record OrderGroup(string Key, string OrderNumber, string Sku, string? Channel,
+        string WorkflowName, List<WorkItem> Units)
+    {
+        public bool AnyActive => Units.Any(u => u.Status == WorkItemStatus.InProgress);
+        public bool AnyOpen => Units.Any(u => u.Status is WorkItemStatus.Queued or WorkItemStatus.InProgress);
+
+        // "2 in progress · 3 queued · 1 done" — only the non-zero buckets, most-active first.
+        public string Summary
+        {
+            get
+            {
+                var parts = new List<string>();
+                void Add(int n, string label) { if (n > 0) parts.Add($"{n} {label}"); }
+                Add(Units.Count(u => u.Status == WorkItemStatus.InProgress), "in progress");
+                Add(Units.Count(u => u.Status == WorkItemStatus.Queued), "queued");
+                Add(Units.Count(u => u.Status == WorkItemStatus.Completed), "done");
+                Add(Units.Count(u => u.Status is WorkItemStatus.Cancelled or WorkItemStatus.Scrapped), "voided");
+                return string.Join(" · ", parts);
+            }
+        }
+    }
+
+    // Serializes DbContext work so the notifier's fire-and-forget refresh can't overlap an action
+    // on the shared scoped DbContext (EF "second operation started on this context"). See CircuitDbGate.
+    private readonly CircuitDbGate _gate = new();
 
     private bool CanCreate =>
         _workflowId > 0 && !string.IsNullOrWhiteSpace(_orderNumber) && !string.IsNullOrWhiteSpace(_sku) && _quantity > 0;
@@ -130,9 +186,12 @@
         _error = null;
         try
         {
-            // Null station = admin override: no claim-ownership check.
-            await Relay.ReleaseAsync(workItem.Id, null);
-            await LoadWorkItemsAsync();
+            await _gate.RunAsync(async () =>
+            {
+                // Null station = admin override: no claim-ownership check.
+                await Relay.ReleaseAsync(workItem.Id, null);
+                await LoadWorkItemsAsync();
+            });
         }
         catch (RelayOperationException ex)
         {
@@ -152,8 +211,11 @@
         _error = null;
         try
         {
-            await OrderService.CancelWorkItemAsync(workItem.Id);
-            await LoadWorkItemsAsync();
+            await _gate.RunAsync(async () =>
+            {
+                await OrderService.CancelWorkItemAsync(workItem.Id);
+                await LoadWorkItemsAsync();
+            });
         }
         catch (OrderServiceException ex)
         {
@@ -168,35 +230,112 @@
         // reload — same mechanism the station screens use (see IRelayNotifier).
         Notifier.StageChanged += OnStageChanged;
 
-        var allWorkflows = await Builder.GetWorkflowsAsync();
-        // Only workflows that can actually accept an order — active and with at least one
-        // stage to queue at — so picking one never hits OrderServiceException's "no stages" guard.
-        _workflows = allWorkflows.Where(w => w.IsActive && w.Stages.Count > 0).ToList();
+        await _gate.RunAsync(async () =>
+        {
+            var allWorkflows = await Builder.GetWorkflowsAsync();
+            // Only workflows that can actually accept an order — active and with at least one
+            // stage to queue at — so picking one never hits OrderServiceException's "no stages" guard.
+            _workflows = allWorkflows.Where(w => w.IsActive && w.Stages.Count > 0).ToList();
 
-        await LoadWorkItemsAsync();
+            await LoadWorkItemsAsync();
+        });
     }
 
     private void OnStageChanged(int stageId)
     {
         // The list spans all stages, so refresh on any change. InvokeAsync marshals back onto this
-        // component's circuit (the event fires from whichever circuit triggered the change).
-        _ = InvokeAsync(async () =>
+        // component's circuit (the event fires from whichever circuit triggered the change); the gate
+        // keeps this refresh from overlapping an in-flight action on the shared DbContext.
+        _ = InvokeAsync(() => _gate.RunAsync(async () =>
         {
             await LoadWorkItemsAsync();
             StateHasChanged();
-        });
+        }));
     }
 
     public ValueTask DisposeAsync()
     {
         // Unsubscribe or we leak this component on the singleton notifier, which outlives the circuit.
         Notifier.StageChanged -= OnStageChanged;
+        _gate.Dispose();
         return ValueTask.CompletedTask;
     }
 
     private async Task LoadWorkItemsAsync()
     {
         _workItems = await OrderService.GetWorkItemsAsync();
+
+        // Group units by order number + workflow, keeping newest orders first (GetWorkItemsAsync
+        // returns newest-first, so the first unit we see per key sets the group's position).
+        var groups = new List<OrderGroup>();
+        var byKey = new Dictionary<string, OrderGroup>();
+        foreach (var wi in _workItems)
+        {
+            var key = $"{wi.WorkflowId}|{wi.OrderNumber}";
+            if (!byKey.TryGetValue(key, out var group))
+            {
+                group = new OrderGroup(key, wi.OrderNumber, wi.Sku, wi.Channel, wi.Workflow.Name, new List<WorkItem>());
+                byKey[key] = group;
+                groups.Add(group);
+            }
+            group.Units.Add(wi);
+        }
+        _groups = groups;
+    }
+
+    private void ToggleGroup(string key)
+    {
+        if (!_expandedGroups.Remove(key))
+        {
+            _expandedGroups.Add(key);
+        }
+    }
+
+    private async Task ReleaseGroupAsync(OrderGroup group)
+    {
+        _error = null;
+        try
+        {
+            await _gate.RunAsync(async () =>
+            {
+                foreach (var unit in group.Units.Where(u => u.Status == WorkItemStatus.InProgress))
+                {
+                    await Relay.ReleaseAsync(unit.Id, null);
+                }
+                await LoadWorkItemsAsync();
+            });
+        }
+        catch (RelayOperationException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task CancelGroupAsync(OrderGroup group)
+    {
+        // Two-click confirm — cancelling the whole batch is terminal for every open unit.
+        if (_confirmCancelKey != group.Key)
+        {
+            _confirmCancelKey = group.Key;
+            return;
+        }
+        _confirmCancelKey = null;
+        _error = null;
+        try
+        {
+            await _gate.RunAsync(async () =>
+            {
+                foreach (var unit in group.Units.Where(u => u.Status is WorkItemStatus.Queued or WorkItemStatus.InProgress))
+                {
+                    await OrderService.CancelWorkItemAsync(unit.Id);
+                }
+                await LoadWorkItemsAsync();
+            });
+        }
+        catch (OrderServiceException ex)
+        {
+            _error = ex.Message;
+        }
     }
 
     private async Task CreateAsync()
@@ -204,18 +343,21 @@
         _error = null;
         try
         {
-            await OrderService.CreateWorkItemAsync(
-                _workflowId,
-                _orderNumber.Trim(),
-                _sku.Trim(),
-                _quantity,
-                string.IsNullOrWhiteSpace(_channel) ? null : _channel.Trim());
+            await _gate.RunAsync(async () =>
+            {
+                await OrderService.CreateWorkItemAsync(
+                    _workflowId,
+                    _orderNumber.Trim(),
+                    _sku.Trim(),
+                    _quantity,
+                    string.IsNullOrWhiteSpace(_channel) ? null : _channel.Trim());
 
-            _orderNumber = string.Empty;
-            _sku = string.Empty;
-            _quantity = 1;
-            _channel = string.Empty;
-            await LoadWorkItemsAsync();
+                _orderNumber = string.Empty;
+                _sku = string.Empty;
+                _quantity = 1;
+                _channel = string.Empty;
+                await LoadWorkItemsAsync();
+            });
         }
         catch (OrderServiceException ex)
         {

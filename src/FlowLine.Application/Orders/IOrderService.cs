@@ -9,10 +9,12 @@ namespace FlowLine.Application.Orders;
 public interface IOrderService
 {
     /// <summary>
-    /// Creates a WorkItem, Queued at the chosen workflow's first stage (by OrderIndex).
-    /// Throws <see cref="OrderServiceException"/> if the workflow has no stages yet.
+    /// Creates <paramref name="quantity"/> WorkItems (one physical unit each, Quantity = 1) for the
+    /// order, all Queued at the chosen workflow's first stage (by OrderIndex) and sharing the order
+    /// number so the Orders screen groups them. Returns the created units. Throws
+    /// <see cref="OrderServiceException"/> if the workflow has no stages yet.
     /// </summary>
-    Task<WorkItem> CreateWorkItemAsync(
+    Task<List<WorkItem>> CreateWorkItemAsync(
         int workflowId, string orderNumber, string sku, int quantity, string? channel,
         CancellationToken cancellationToken = default);
 

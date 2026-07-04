@@ -81,10 +81,14 @@
     private LineWorkflowStatus? _workflow;
     private bool _loaded;
 
+    // Serializes DbContext work: two StageChanged events close together would otherwise fire two
+    // overlapping refreshes on the shared scoped DbContext (EF "second operation"). See CircuitDbGate.
+    private readonly CircuitDbGate _gate = new();
+
     protected override async Task OnInitializedAsync()
     {
         Notifier.StageChanged += OnStageChanged;
-        await LoadAsync();
+        await _gate.RunAsync(LoadAsync);
     }
 
     private async Task LoadAsync()
@@ -97,16 +101,17 @@
 
     private void OnStageChanged(int stageId)
     {
-        _ = InvokeAsync(async () =>
+        _ = InvokeAsync(() => _gate.RunAsync(async () =>
         {
             await LoadAsync();
             StateHasChanged();
-        });
+        }));
     }
 
     public void Dispose()
     {
         // Unsubscribe or the singleton notifier keeps this dead circuit's component alive.
         Notifier.StageChanged -= OnStageChanged;
+        _gate.Dispose();
     }
 }

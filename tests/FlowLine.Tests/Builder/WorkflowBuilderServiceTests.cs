@@ -384,4 +384,39 @@ public class WorkflowBuilderServiceTests
             }
         }
     }
+
+    [Fact]
+    public async Task EntryModeFlags_AreMutuallyExclusive_AndSurviveDuplicate()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            var (service, db, _, cleanup) = CreateService(options);
+            using (cleanup)
+            using (db)
+            {
+                var workflow = await service.CreateWorkflowAsync("WF", null);
+
+                // Turning on ad-hoc clears prebuild, and vice-versa — they can't both be on.
+                await service.SetWorkflowRequiresPrebuildAsync(workflow.Id, true);
+                await service.SetWorkflowAllowAdHocStartAsync(workflow.Id, true);
+                var afterAdHoc = await db.Workflows.SingleAsync(w => w.Id == workflow.Id);
+                Assert.True(afterAdHoc.AllowAdHocStart);
+                Assert.False(afterAdHoc.RequiresPrebuild);
+
+                await service.SetWorkflowRequiresPrebuildAsync(workflow.Id, true);
+                var afterPrebuild = await db.Workflows.SingleAsync(w => w.Id == workflow.Id);
+                Assert.True(afterPrebuild.RequiresPrebuild);
+                Assert.False(afterPrebuild.AllowAdHocStart);
+
+                // Duplicate carries both entry-mode flags across.
+                await service.SetWorkflowRequiresPrebuildAsync(workflow.Id, false);
+                await service.SetWorkflowAllowAdHocStartAsync(workflow.Id, true);
+                var copy = await service.DuplicateWorkflowAsync(workflow.Id, "WF Copy");
+                var reloadedCopy = await db.Workflows.SingleAsync(w => w.Id == copy.Id);
+                Assert.True(reloadedCopy.AllowAdHocStart);
+                Assert.False(reloadedCopy.RequiresPrebuild);
+            }
+        }
+    }
 }

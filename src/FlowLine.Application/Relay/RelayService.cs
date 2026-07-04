@@ -312,54 +312,117 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             throw new RelayOperationException("A prebuild can only be scanned at the workflow's first station.");
         }
 
-        // An order already on this line takes priority over History: if it's sitting Queued at
-        // this entry stage, the scan *claims* it instead of creating a duplicate — that's how
-        // orders authored on the Orders screen (or imported from History) get started on a
-        // prebuild workflow. Anything else in flight means a duplicate scan.
-        var existing = await db.WorkItems.FirstOrDefaultAsync(
+        // An order already on this line takes priority over History: claim a unit of it that's
+        // sitting Queued at THIS entry stage instead of creating a duplicate — that's how orders
+        // authored on the Orders screen (or imported from History) get started on a prebuild
+        // workflow. A QTY-N order is N such units sharing one number, so each scan claims the next
+        // one (oldest first, FIFO); the operator scans the batch number once per unit.
+        var queuedHere = await db.WorkItems
+            .Where(wi => wi.WorkflowId == station.Stage.WorkflowId
+                && wi.OrderNumber == prebuildId
+                && wi.Status == WorkItemStatus.Queued
+                && wi.CurrentStageId == station.StageId)
+            .OrderBy(wi => wi.QueuedAtUtc).ThenBy(wi => wi.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (queuedHere is not null)
+        {
+            queuedHere.ClaimedByStationId = stationId;
+            queuedHere.ClaimedAtUtc = DateTime.UtcNow;
+            queuedHere.Status = WorkItemStatus.InProgress;
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                throw new RelayOperationException($"'{prebuildId}' was just claimed by another station.");
+            }
+            notifier.NotifyStageChanged(station.StageId);
+            return queuedHere;
+        }
+
+        // Nothing of this order is waiting at the entry stage. If a unit of it is nonetheless in
+        // flight (claimed here, or downstream), there's nothing left to start — a duplicate scan.
+        var inFlight = await db.WorkItems.AnyAsync(
             wi => wi.WorkflowId == station.Stage.WorkflowId
                 && wi.OrderNumber == prebuildId
                 && wi.Status != WorkItemStatus.Completed
                 && wi.Status != WorkItemStatus.Cancelled
                 && wi.Status != WorkItemStatus.Scrapped,
             cancellationToken);
-        if (existing is not null)
+        if (inFlight)
         {
-            if (existing.Status == WorkItemStatus.Queued && existing.CurrentStageId == station.StageId)
-            {
-                existing.ClaimedByStationId = stationId;
-                existing.ClaimedAtUtc = DateTime.UtcNow;
-                existing.Status = WorkItemStatus.InProgress;
-                try
-                {
-                    await db.SaveChangesAsync(cancellationToken);
-                }
-                catch (DbUpdateConcurrencyException)
-                {
-                    throw new RelayOperationException($"'{prebuildId}' was just claimed by another station.");
-                }
-                notifier.NotifyStageChanged(station.StageId);
-                return existing;
-            }
             throw new RelayOperationException($"'{prebuildId}' is already being worked on this line.");
         }
 
-        // Not on the line yet — the scanned ID must then be a History OrderId; the new
-        // WorkItem inherits that row's SKU/qty/channel.
+        // Not on the line yet — the scanned ID must then be a History OrderId. History.Qty is the
+        // number of physical units, so create that many WorkItems sharing the order
+        // number: this first scan claims one immediately and leaves the rest queued for later scans.
         var history = await db.History.FirstOrDefaultAsync(h => h.OrderId == prebuildId, cancellationToken)
             ?? throw new RelayOperationException($"'{prebuildId}' is not in History and doesn't match a queued order.");
 
-        // Created already claimed and InProgress at the scanning station, so the operator can begin
-        // immediately; it then hands off downstream like any other unit.
+        var now = DateTime.UtcNow;
+        var units = history.Qty < 1 ? 1 : history.Qty;
+        var workItems = new List<WorkItem>(units);
+        for (var i = 0; i < units; i++)
+        {
+            workItems.Add(new WorkItem
+            {
+                WorkflowId = station.Stage.WorkflowId,
+                CurrentStageId = station.StageId,
+                OrderNumber = history.OrderId,
+                Sku = history.Sku,
+                Quantity = 1,
+                Channel = history.Channel,
+                Status = i == 0 ? WorkItemStatus.InProgress : WorkItemStatus.Queued,
+                ClaimedByStationId = i == 0 ? stationId : null,
+                ClaimedAtUtc = i == 0 ? now : null,
+                QueuedAtUtc = now,
+            });
+        }
+
+        var workItem = workItems[0];
+        db.WorkItems.AddRange(workItems);
+        await db.SaveChangesAsync(cancellationToken);
+
+        notifier.NotifyStageChanged(station.StageId);
+        return workItem;
+    }
+
+    public async Task<WorkItem> StartAdHocAsync(int stationId, CancellationToken cancellationToken = default)
+    {
+        var station = await db.Stations
+            .Include(s => s.Stage).ThenInclude(st => st.Workflow)
+            .FirstOrDefaultAsync(s => s.Id == stationId, cancellationToken)
+            ?? throw new RelayOperationException($"Station {stationId} does not exist.");
+
+        if (!station.Stage.Workflow.AllowAdHocStart)
+        {
+            throw new RelayOperationException("This workflow doesn't allow starting a run without an order.");
+        }
+
+        // A run starts a unit, so this must be the workflow's first stage.
+        var firstStageId = await db.Stages
+            .Where(s => s.WorkflowId == station.Stage.WorkflowId)
+            .OrderBy(s => s.OrderIndex)
+            .Select(s => s.Id)
+            .FirstAsync(cancellationToken);
+        if (station.StageId != firstStageId)
+        {
+            throw new RelayOperationException("A run can only be started at the workflow's first station.");
+        }
+
+        // Generated run number — timestamp-based so it's human-readable, sortable, and unique per
+        // second. SKU "RUN"/qty 1 stand in for "training run"; there's no real order behind it.
         var now = DateTime.UtcNow;
         var workItem = new WorkItem
         {
             WorkflowId = station.Stage.WorkflowId,
             CurrentStageId = station.StageId,
-            OrderNumber = history.OrderId,
-            Sku = history.Sku,
-            Quantity = history.Qty,
-            Channel = history.Channel,
+            OrderNumber = $"RUN-{now:yyyyMMdd-HHmmss}",
+            Sku = "RUN",
+            Quantity = 1,
+            Channel = null,
             Status = WorkItemStatus.InProgress,
             ClaimedByStationId = stationId,
             ClaimedAtUtc = now,

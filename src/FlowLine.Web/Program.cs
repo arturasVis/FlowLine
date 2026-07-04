@@ -16,6 +16,12 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Company deployment runs as a Windows Service (see deploy/install-flowline-service.ps1).
+// UseWindowsService is a no-op when running normally (dev, dotnet run), so this is safe everywhere;
+// it also sets the content root to the executable's folder, which a service needs (services start
+// with ContentRoot = System32 otherwise, breaking wwwroot/media and appsettings loading).
+builder.Host.UseWindowsService();
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();

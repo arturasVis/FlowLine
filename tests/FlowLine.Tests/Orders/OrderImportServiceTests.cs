@@ -95,12 +95,15 @@ public class OrderImportServiceTests
             var service = new OrderImportService(db, new OrderService(db, new FlowLine.Application.Relay.RelayNotifier()));
             var count = await service.ImportAsync(workflow.Id, ["ORD-2001", "ORD-2002"]);
 
+            // One History *order* imported (count is orders, not units)...
             Assert.Equal(1, count);
-            var imported = await db.WorkItems.SingleAsync(wi => wi.OrderNumber == "ORD-2001");
-            Assert.Equal(firstStage.Id, imported.CurrentStageId);
-            Assert.Equal(WorkItemStatus.Queued, imported.Status);
-            Assert.Equal(2, imported.Quantity);
-            Assert.Equal("eBay", imported.Channel);
+            // ...but its QTY of 2 becomes 2 independent units, each Quantity 1, queued at stage 1.
+            var imported = await db.WorkItems.Where(wi => wi.OrderNumber == "ORD-2001").ToListAsync();
+            Assert.Equal(2, imported.Count);
+            Assert.All(imported, wi => Assert.Equal(firstStage.Id, wi.CurrentStageId));
+            Assert.All(imported, wi => Assert.Equal(WorkItemStatus.Queued, wi.Status));
+            Assert.All(imported, wi => Assert.Equal(1, wi.Quantity));
+            Assert.All(imported, wi => Assert.Equal("eBay", wi.Channel));
             // Still exactly one WorkItem for ORD-2002 (the pre-existing one), not a duplicate.
             Assert.Equal(1, await db.WorkItems.CountAsync(wi => wi.OrderNumber == "ORD-2002"));
         }

@@ -23,8 +23,15 @@ public interface IWorkflowBuilderService
     /// <summary>"Archive" (FR-1) is IsActive = false, not a delete — history (WorkItems, timings) stays intact.</summary>
     Task SetWorkflowActiveAsync(int workflowId, bool isActive, CancellationToken cancellationToken = default);
 
-    /// <summary>Toggles whether units in this workflow must have a prebuild ID scanned at step 1.</summary>
+    /// <summary>Toggles whether units in this workflow must have a prebuild ID scanned at step 1. Enabling turns AllowAdHocStart off.</summary>
     Task SetWorkflowRequiresPrebuildAsync(int workflowId, bool requiresPrebuild, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Toggles free-run mode: the entry station gets a "Start run" button that creates and claims a
+    /// WorkItem on the spot (no premade order) — for routines/training where the point is doing and
+    /// timing the steps. Enabling turns RequiresPrebuild off (both change how the entry stage gets work).
+    /// </summary>
+    Task SetWorkflowAllowAdHocStartAsync(int workflowId, bool allowAdHocStart, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deep-clones a workflow's whole template (stages, steps, media — including copying the

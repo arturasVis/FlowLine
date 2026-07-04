@@ -189,8 +189,12 @@ public class StatsService(FlowLineDbContext db) : IStatsService
     }
 
     private async Task<Dictionary<int, string>> GetStaffNamesAsync(CancellationToken cancellationToken) =>
-        // Small lookup list — same in-memory map pattern as OrderImportService.
-        await db.Staff.ToDictionaryAsync(s => s.StaffNumber, s => s.Name, cancellationToken);
+        // Small lookup list — same in-memory map pattern as OrderImportService. The real StaffTable
+        // has no enforced unique key and can contain duplicate staff numbers, so group before mapping
+        // (last row wins) rather than ToDictionary, which would throw on a duplicate key.
+        (await db.Staff.ToListAsync(cancellationToken))
+            .GroupBy(s => s.StaffNumber)
+            .ToDictionary(g => g.Key, g => g.Last().Name);
 
     private static List<StepAverage> ComputeStepAverages(List<WorkItem> units) =>
         units

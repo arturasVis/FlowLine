@@ -7,6 +7,12 @@ namespace FlowLine.Application.Orders;
 
 public class OrderImportService(FlowLineDbContext db, IOrderService orders) : IOrderImportService
 {
+    // The real company History table is a ~123k-row testing log, so the import list is capped to the
+    // most recent rows by date (a server-side TOP N) — materializing all of them froze the page.
+    // This is a volume guard, not a business filter: the "which rows are importable" criterion is
+    // still TBD with the company. Bump/replace this once that rule is known.
+    private const int MaxImportableRows = 500;
+
     public bool ExternalTablesSupported =>
         db.Database.ProviderName == "Microsoft.EntityFrameworkCore.SqlServer";
 
@@ -25,14 +31,19 @@ public class OrderImportService(FlowLineDbContext db, IOrderService orders) : IO
 
         var history = await db.History
             .OrderByDescending(h => h.Date)
+            .Take(MaxImportableRows)
             .ToListAsync(cancellationToken);
 
         // StaffTable is a small lookup list, so resolve assignee names against an in-memory map
         // rather than a SQL join — a nullable "AssignedNumber" -> non-nullable "StaffNumber" join
         // key doesn't translate to SQL anyway. (In the real data AssignedNumber is usually a
         // non-numeric marker like "Unknown", so it reads as null and no name resolves.)
-        var staffNames = await db.Staff
-            .ToDictionaryAsync(s => s.StaffNumber, s => s.Name, cancellationToken);
+        // The real StaffTable has no enforced unique key and contains duplicate staff numbers, so
+        // group before building the map (last row wins) rather than ToDictionary, which would throw
+        // on the duplicate key.
+        var staffNames = (await db.Staff.ToListAsync(cancellationToken))
+            .GroupBy(s => s.StaffNumber)
+            .ToDictionary(g => g.Key, g => g.Last().Name);
 
         return history
             .Where(h => !existing.Contains(h.OrderId))

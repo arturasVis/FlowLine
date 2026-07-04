@@ -26,10 +26,15 @@ public class OrderService(FlowLineDbContext db, IRelayNotifier notifier) : IOrde
         notifier.NotifyStageChanged(workItem.CurrentStageId);
     }
 
-    public async Task<WorkItem> CreateWorkItemAsync(
+    public async Task<List<WorkItem>> CreateWorkItemAsync(
         int workflowId, string orderNumber, string sku, int quantity, string? channel,
         CancellationToken cancellationToken = default)
     {
+        // Quantity is the *number of physical units* to build for this order — each becomes its own
+        // WorkItem (Quantity = 1) so it flows through the line independently, sharing the order number
+        // so the Orders screen can group them. (Historically Quantity sat unused on a single WorkItem.)
+        var units = quantity < 1 ? 1 : quantity;
+
         var firstStage = await db.Stages
             .Where(s => s.WorkflowId == workflowId)
             .OrderBy(s => s.OrderIndex)
@@ -37,21 +42,27 @@ public class OrderService(FlowLineDbContext db, IRelayNotifier notifier) : IOrde
             ?? throw new OrderServiceException(
                 "This workflow has no stages yet — add one in the workflow builder before creating orders.");
 
-        var workItem = new WorkItem
+        // One shared timestamp so the units order together and read as a single batch.
+        var now = DateTime.UtcNow;
+        var workItems = new List<WorkItem>(units);
+        for (var i = 0; i < units; i++)
         {
-            WorkflowId = workflowId,
-            CurrentStageId = firstStage.Id,
-            OrderNumber = orderNumber,
-            Sku = sku,
-            Quantity = quantity,
-            Channel = channel,
-            Status = WorkItemStatus.Queued,
-            QueuedAtUtc = DateTime.UtcNow,
-        };
+            workItems.Add(new WorkItem
+            {
+                WorkflowId = workflowId,
+                CurrentStageId = firstStage.Id,
+                OrderNumber = orderNumber,
+                Sku = sku,
+                Quantity = 1,
+                Channel = channel,
+                Status = WorkItemStatus.Queued,
+                QueuedAtUtc = now,
+            });
+        }
 
-        db.WorkItems.Add(workItem);
+        db.WorkItems.AddRange(workItems);
         await db.SaveChangesAsync(cancellationToken);
-        return workItem;
+        return workItems;
     }
 
     public Task<List<WorkItem>> GetWorkItemsAsync(CancellationToken cancellationToken = default)

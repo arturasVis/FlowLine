@@ -504,6 +504,12 @@ button.danger:hover { color: #fff; background: var(--danger); border-color: var(
 .workflow-table tbody tr:last-child td { border-bottom: none; }
 .workflow-table tbody tr:hover { background: var(--surface-2); }
 
+/* Orders grouped by order number: the group row is a clickable expander, unit rows sit indented under it. */
+.order-group-row { cursor: pointer; }
+.order-group-row td:first-child { width: 1.5rem; color: var(--muted); text-align: center; }
+.order-unit-row { background: var(--surface-2); font-size: 0.9rem; }
+.order-unit-row .unit-label { color: var(--muted); }
+
 .status-badge {
     display: inline-block;
     color: var(--muted);
