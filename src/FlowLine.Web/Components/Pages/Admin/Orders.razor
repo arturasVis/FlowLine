@@ -69,6 +69,11 @@
                         <td>@group.WorkflowName</td>
                         <td>@group.Summary</td>
                         <td class="order-actions">
+                            @if (group.Units.Count == 1)
+                            {
+                                <a class="unit-action" href="/admin/orders/@group.Units[0].Id" @onclick:stopPropagation="true"
+                                   title="View this unit's recorded step data">View</a>
+                            }
                             @if (group.AnyActive)
                             {
                                 <button class="unit-action" title="Free every in-progress unit in this order"
@@ -100,6 +105,7 @@
                                     @(workItem.ClaimedByStation is not null ? $" @ {workItem.ClaimedByStation.Name}" : "")
                                 </td>
                                 <td class="order-actions">
+                                    <a class="unit-action" href="/admin/orders/@workItem.Id" title="View this unit's recorded step data">View</a>
                                     @if (workItem.Status == WorkItemStatus.InProgress)
                                     {
                                         <button class="unit-action" @onclick="() => ReleaseAsync(workItem)">Release</button>

@@ -65,6 +65,19 @@ public class OrderService(FlowLineDbContext db, IRelayNotifier notifier) : IOrde
         return workItems;
     }
 
+    public Task<WorkItem?> GetWorkItemDetailAsync(int workItemId, CancellationToken cancellationToken = default)
+    {
+        return db.WorkItems
+            .AsNoTracking()
+            .Include(wi => wi.Workflow)
+            .Include(wi => wi.CurrentStage)
+            .Include(wi => wi.ClaimedByStation)
+            .Include(wi => wi.StepCompletions).ThenInclude(sc => sc.Step)
+            .Include(wi => wi.StepCompletions).ThenInclude(sc => sc.Values).ThenInclude(v => v.StepInput)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(wi => wi.Id == workItemId, cancellationToken);
+    }
+
     public Task<List<WorkItem>> GetWorkItemsAsync(CancellationToken cancellationToken = default)
     {
         // AsNoTracking: this is a read-only display list, and (crucially) the circuit-scoped

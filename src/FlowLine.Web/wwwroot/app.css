@@ -303,6 +303,26 @@ button.danger:hover { color: #fff; background: var(--danger); border-color: var(
 
 /* ---- Prebuild -----------------------------------------------------------  */
 .prebuild-toggle { display: inline-flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0 1.2rem; font-weight: 600; }
+
+/* Workflow readiness (builder + list) */
+.readiness { margin: 0.5rem 0 1rem; font-weight: 600; }
+.readiness.ready { color: #15803d; }
+.readiness.not-ready {
+    background: #fff7ed; border: 1px solid #fdba74; border-radius: var(--radius);
+    padding: 0.6rem 0.9rem; color: #9a3412;
+}
+.readiness.not-ready ul { margin: 0.3rem 0 0; padding-left: 1.2rem; font-weight: 500; }
+.readiness-badge { border-radius: 999px; padding: 0.1rem 0.6rem; font-weight: 700; font-size: 0.82rem; white-space: nowrap; }
+.readiness-badge.ready { background: #dcfce7; color: #15803d; }
+.readiness-badge.not-ready { background: #ffedd5; color: #9a3412; cursor: help; }
+.stage-warning { color: #9a3412; font-weight: 600; margin: 0.4rem 0; }
+
+/* Stations inside a stage card */
+.stage-stations { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.5rem 0 0.9rem; }
+.stage-stations .stations-label { color: var(--muted); font-weight: 700; font-size: 0.82rem; }
+.station-chip, .add-station { display: inline-flex; align-items: center; gap: 0.3rem; }
+.station-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.4rem; }
+.station-chip input { width: 9rem; }
 .prebuild-badge {
     background: var(--accent-soft); color: var(--accent-hover);
     border: 1px solid var(--accent-bright); border-radius: 999px;
@@ -832,3 +852,28 @@ h1:focus { outline: none; }
 .line-list-name { font-weight: 650; font-size: 1.05rem; }
 .line-list-stats { display: flex; gap: 1.25rem; color: var(--muted); font-size: 0.9rem; flex-wrap: wrap; }
 .line-list-go { color: var(--accent); font-size: 0.9rem; white-space: nowrap; }
+
+/* --- Step data capture: station inputs, builder inputs editor, unit detail --- */
+.step-inputs { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem; }
+.step-input { display: flex; flex-direction: column; gap: 0.3rem; }
+.step-input .input-label { font-weight: 600; color: var(--muted); font-size: 0.9rem; }
+.step-input input[type="text"], .step-input input[type="number"], .step-input input:not([type]) {
+    padding: 0.6rem 0.7rem; font-size: 1.05rem;
+}
+.step-input .passfail { display: flex; gap: 0.5rem; }
+.step-input .pf { padding: 0.55rem 1.4rem; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; cursor: pointer; }
+.step-input .pf-pass-on { background: var(--ok, #1a7f37); color: #fff; border-color: transparent; }
+.step-input .pf-fail-on { background: var(--danger, #c0362c); color: #fff; border-color: transparent; }
+.step-input .checklist { display: flex; flex-direction: column; gap: 0.35rem; }
+.step-input .check { display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; }
+
+.inputs-editor { margin-top: 0.75rem; border-top: 1px dashed var(--border); padding-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.inputs-label { color: var(--muted); font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+.input-row, .add-input { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.input-row .req-flag, .add-input .req-flag { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--muted); }
+.input-row textarea { min-height: 2.4rem; min-width: 14rem; }
+
+.unit-summary { display: flex; gap: 1.5rem; flex-wrap: wrap; margin: 0.5rem 0 1.5rem; color: var(--muted); }
+.unit-summary strong { color: var(--text, inherit); margin-right: 0.3rem; }
+.captured-values { margin: 0; padding-left: 1.1rem; }
+.captured-values .cv-label { color: var(--muted); }

@@ -25,6 +25,12 @@ public interface IOrderService
     Task<List<WorkItem>> GetWorkItemsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// One WorkItem with its completed steps and the operator's captured input values loaded
+    /// (each value's <see cref="StepInput"/> label included) — for the per-unit detail view.
+    /// </summary>
+    Task<WorkItem?> GetWorkItemDetailAsync(int workItemId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Voids a Queued or InProgress WorkItem (admin action, e.g. created by mistake): status
     /// becomes Cancelled, any claim is cleared, step history is kept. Terminal — the order
     /// number becomes importable/scannable again. Throws <see cref="OrderServiceException"/>

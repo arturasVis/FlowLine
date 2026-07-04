@@ -1,0 +1,101 @@
+@page "/admin/orders/{WorkItemId:int}"
+@attribute [Authorize(Policy = FlowLinePolicies.CanViewReports)]
+@inject IOrderService OrderService
+
+<PageTitle>Unit @WorkItemId — Admin</PageTitle>
+
+<div class="admin-page">
+    <p><a href="/admin/orders">&larr; All orders</a></p>
+
+    @if (_workItem is null)
+    {
+        <p>@(_loaded ? $"Unit {WorkItemId} not found." : "Loading…")</p>
+    }
+    else
+    {
+        <h1>Order #@_workItem.OrderNumber</h1>
+        <div class="unit-summary">
+            <span><strong>SKU</strong> @_workItem.Sku</span>
+            <span><strong>Workflow</strong> @_workItem.Workflow.Name</span>
+            <span><strong>Status</strong> @StatusLabel(_workItem.Status)</span>
+            <span><strong>Current stage</strong> @_workItem.CurrentStage.Name</span>
+            @if (_workItem.ClaimedByStation is not null)
+            {
+                <span><strong>Claimed by</strong> @_workItem.ClaimedByStation.Name</span>
+            }
+            @if (!string.IsNullOrWhiteSpace(_workItem.Channel))
+            {
+                <span><strong>Channel</strong> @_workItem.Channel</span>
+            }
+        </div>
+
+        <h2>Completed steps</h2>
+        @if (_completions.Count == 0)
+        {
+            <p>No steps completed yet.</p>
+        }
+        else
+        {
+            <table class="workflow-table">
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Recorded data</th>
+                        <th>By</th>
+                        <th>Completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var completion in _completions)
+                    {
+                        <tr>
+                            <td>@completion.Step.Name</td>
+                            <td>
+                                @if (completion.Values.Count == 0)
+                                {
+                                    <span class="muted">—</span>
+                                }
+                                else
+                                {
+                                    <ul class="captured-values">
+                                        @foreach (var value in completion.Values.OrderBy(v => v.StepInput.OrderIndex))
+                                        {
+                                            <li><span class="cv-label">@value.StepInput.Label:</span> @DisplayValue(value.Value)</li>
+                                        }
+                                    </ul>
+                                }
+                            </td>
+                            <td>@(completion.CompletedByStaffNumber?.ToString() ?? "—")</td>
+                            <td>@completion.CompletedAtUtc.ToLocalTime().ToString("g")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public int WorkItemId { get; set; }
+
+    private WorkItem? _workItem;
+    private bool _loaded;
+    private List<StepCompletion> _completions = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workItem = await OrderService.GetWorkItemDetailAsync(WorkItemId);
+        _loaded = true;
+        _completions = _workItem?.StepCompletions.OrderBy(sc => sc.CompletedAtUtc).ToList() ?? [];
+    }
+
+    // Checklist values are stored newline-joined; show them comma-separated on one line.
+    private static string DisplayValue(string value) => value.Replace("\n", ", ");
+
+    private static string StatusLabel(WorkItemStatus status) => status switch
+    {
+        WorkItemStatus.InProgress => "In progress",
+        _ => status.ToString(),
+    };
+}

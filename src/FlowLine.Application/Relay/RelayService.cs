@@ -9,8 +9,15 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
 {
     public async Task<WorkItem?> ClaimNextAsync(int stationId, CancellationToken cancellationToken = default)
     {
-        var station = await db.Stations.FindAsync([stationId], cancellationToken)
+        var station = await db.Stations
+            .Include(s => s.Stage)
+            .FirstOrDefaultAsync(s => s.Id == stationId, cancellationToken)
             ?? throw new RelayOperationException($"Station {stationId} does not exist.");
+
+        if (station.Stage.RequiresScan)
+        {
+            return null;
+        }
 
         while (true)
         {
@@ -47,13 +54,13 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         }
     }
 
-    public async Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, string? scannedCode = null, CancellationToken cancellationToken = default)
+    public async Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, IReadOnlyCollection<StepInputValue>? inputValues = null, CancellationToken cancellationToken = default)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         var workItem = await db.WorkItems
             .Include(wi => wi.StepCompletions)
-            .Include(wi => wi.CurrentStage).ThenInclude(s => s.Steps)
+            .Include(wi => wi.CurrentStage).ThenInclude(s => s.Steps).ThenInclude(st => st.Inputs)
             .Include(wi => wi.Workflow).ThenInclude(w => w.Stages)
             .SingleOrDefaultAsync(wi => wi.Id == workItemId, cancellationToken)
             ?? throw new RelayOperationException($"WorkItem {workItemId} does not exist.");
@@ -77,19 +84,28 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             ?? throw new RelayOperationException(
                 $"Stage {stage.Id} has no remaining steps for WorkItem {workItemId}.");
 
-        // Enforced here, not just in the UI: a scan-required step is a physical right-unit
-        // check, so the server refuses to advance without the matching order-number scan.
-        if (nextStep.RequiresScan)
+        // Validate the operator's answers against the step's configured inputs and turn them into
+        // StepCompletionValue rows. Only values for this step's own inputs are kept; a required
+        // input that's blank, or a Number that doesn't parse, aborts the whole advance.
+        var providedByInputId = (inputValues ?? [])
+            .GroupBy(v => v.StepInputId)
+            .ToDictionary(g => g.Key, g => g.Last().Value ?? string.Empty);
+        var capturedValues = new List<StepCompletionValue>();
+        foreach (var input in nextStep.Inputs.OrderBy(i => i.OrderIndex))
         {
-            var scanned = scannedCode?.Trim() ?? string.Empty;
-            if (scanned.Length == 0)
+            var value = (providedByInputId.GetValueOrDefault(input.Id) ?? string.Empty).Trim();
+            if (input.Required && value.Length == 0)
             {
-                throw new RelayOperationException("This step requires scanning the unit's order number.");
+                throw new RelayOperationException($"'{input.Label}' is required.");
             }
-            if (!scanned.Equals(workItem.OrderNumber.Trim(), StringComparison.OrdinalIgnoreCase))
+            if (value.Length > 0 && input.Type == StepInputType.Number
+                && !decimal.TryParse(value, out _))
             {
-                throw new RelayOperationException(
-                    $"Scanned '{scanned}', but this unit is order '{workItem.OrderNumber}'. Check you have the right unit.");
+                throw new RelayOperationException($"'{input.Label}' must be a number.");
+            }
+            if (value.Length > 0)
+            {
+                capturedValues.Add(new StepCompletionValue { StepInputId = input.Id, Value = value });
             }
         }
 
@@ -114,6 +130,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             CompletedByStaffNumber = staffNumber,
             StartedAtUtc = startedAtUtc,
             CompletedAtUtc = DateTime.UtcNow,
+            Values = capturedValues,
         });
 
         var outcome = AdvanceOutcome.Advanced;
@@ -265,6 +282,7 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         return db.Stations
             .Include(s => s.Stage).ThenInclude(st => st.Workflow).ThenInclude(w => w.Stages)
             .Include(s => s.Stage).ThenInclude(st => st.Steps).ThenInclude(step => step.MediaAssets)
+            .Include(s => s.Stage).ThenInclude(st => st.Steps).ThenInclude(step => step.Inputs)
             .AsSplitQuery()
             .SingleOrDefaultAsync(s => s.Id == stationId, cancellationToken);
     }
@@ -286,6 +304,29 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
             .SingleOrDefaultAsync(
                 wi => wi.ClaimedByStationId == stationId && wi.Status == WorkItemStatus.InProgress,
                 cancellationToken);
+    }
+
+    public async Task<WorkItem> ClaimByScanAsync(int stationId, string scannedCode, CancellationToken cancellationToken = default)
+    {
+        scannedCode = scannedCode?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(scannedCode))
+        {
+            throw new RelayOperationException("Scan or enter an order number.");
+        }
+
+        var station = await db.Stations
+            .Include(s => s.Stage)
+            .FirstOrDefaultAsync(s => s.Id == stationId, cancellationToken)
+            ?? throw new RelayOperationException($"Station {stationId} does not exist.");
+
+        if (!station.Stage.RequiresScan)
+        {
+            throw new RelayOperationException("This stage doesn't require scan-to-claim.");
+        }
+
+        return await TryClaimQueuedAtStationByOrderNumberAsync(station, scannedCode, cancellationToken)
+            ?? throw new RelayOperationException(
+                $"No queued unit with order '{scannedCode}' is waiting at {station.Stage.Name}.");
     }
 
     public async Task<WorkItem> CreateFromPrebuildAsync(int stationId, string prebuildId, CancellationToken cancellationToken = default)
@@ -317,27 +358,9 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
         // authored on the Orders screen (or imported from History) get started on a prebuild
         // workflow. A QTY-N order is N such units sharing one number, so each scan claims the next
         // one (oldest first, FIFO); the operator scans the batch number once per unit.
-        var queuedHere = await db.WorkItems
-            .Where(wi => wi.WorkflowId == station.Stage.WorkflowId
-                && wi.OrderNumber == prebuildId
-                && wi.Status == WorkItemStatus.Queued
-                && wi.CurrentStageId == station.StageId)
-            .OrderBy(wi => wi.QueuedAtUtc).ThenBy(wi => wi.Id)
-            .FirstOrDefaultAsync(cancellationToken);
+        var queuedHere = await TryClaimQueuedAtStationByOrderNumberAsync(station, prebuildId, cancellationToken);
         if (queuedHere is not null)
         {
-            queuedHere.ClaimedByStationId = stationId;
-            queuedHere.ClaimedAtUtc = DateTime.UtcNow;
-            queuedHere.Status = WorkItemStatus.InProgress;
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                throw new RelayOperationException($"'{prebuildId}' was just claimed by another station.");
-            }
-            notifier.NotifyStageChanged(station.StageId);
             return queuedHere;
         }
 
@@ -387,6 +410,40 @@ public class RelayService(FlowLineDbContext db, IRelayNotifier notifier) : IRela
 
         notifier.NotifyStageChanged(station.StageId);
         return workItem;
+    }
+
+    private async Task<WorkItem?> TryClaimQueuedAtStationByOrderNumberAsync(
+        Station station,
+        string orderNumber,
+        CancellationToken cancellationToken)
+    {
+        var queued = await db.WorkItems
+            .Where(wi => wi.WorkflowId == station.Stage.WorkflowId
+                && wi.OrderNumber == orderNumber
+                && wi.Status == WorkItemStatus.Queued
+                && wi.CurrentStageId == station.StageId)
+            .OrderBy(wi => wi.QueuedAtUtc).ThenBy(wi => wi.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (queued is null)
+        {
+            return null;
+        }
+
+        queued.ClaimedByStationId = station.Id;
+        queued.ClaimedAtUtc = DateTime.UtcNow;
+        queued.Status = WorkItemStatus.InProgress;
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new RelayOperationException($"'{orderNumber}' was just claimed by another station.");
+        }
+
+        notifier.NotifyStageChanged(station.StageId);
+        return queued;
     }
 
     public async Task<WorkItem> StartAdHocAsync(int stationId, CancellationToken cancellationToken = default)

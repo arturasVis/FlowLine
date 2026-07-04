@@ -15,14 +15,14 @@
 }
 else if (_station is null)
 {
-    <p>Loading…</p>
+    <p>Loading...</p>
 }
 else
 {
     <div class="station" tabindex="0" @ref="_rootElement" @onkeydown="HandleKeyDown">
         <header class="station-header">
             <h1>@_station.Name</h1>
-            <span class="station-path">@_station.Stage.Workflow.Name — @_station.Stage.Name</span>
+            <span class="station-path">@_station.Stage.Workflow.Name - @_station.Stage.Name</span>
             <span class="queue-depth">Queue: @_queueDepth waiting</span>
         </header>
 
@@ -44,10 +44,26 @@ else
                     }
                 </div>
             }
+            else if (ShowStageScan)
+            {
+                <div class="prebuild-scan">
+                    <p>Scan the unit's order number to claim it at this stage.</p>
+                    <input @ref="_stageScanInput" @bind="_stageScanEntry" @bind:event="oninput"
+                           placeholder="Order number"
+                           @onkeydown="HandleStageScanKey" @onkeydown:stopPropagation="true" />
+                    <button @onclick="StartFromStageScanAsync" disabled="@(_advancing || string.IsNullOrWhiteSpace(_stageScanEntry))">
+                        Claim unit
+                    </button>
+                    @if (_errorMessage is not null)
+                    {
+                        <p class="error">@_errorMessage</p>
+                    }
+                </div>
+            }
             else if (ShowAdHocStart)
             {
                 <div class="idle">
-                    <p>Free-run workflow — start a run to do and time the steps.</p>
+                    <p>Free-run workflow - start a run to do and time the steps.</p>
                     <button class="advance" @onclick="StartAdHocAsync" disabled="@_advancing">Start run (Enter)</button>
                     @if (_errorMessage is not null)
                     {
@@ -97,27 +113,53 @@ else
                             }
                         </div>
                     }
+
+                    @if (_currentStep.Inputs.Count > 0)
+                    {
+                        <div class="step-inputs">
+                            @foreach (var input in _currentStep.Inputs.OrderBy(i => i.OrderIndex))
+                            {
+                                <div class="step-input">
+                                    <label class="input-label">@input.Label @(input.Required ? "*" : "")</label>
+                                    @switch (input.Type)
+                                    {
+                                        case StepInputType.Text:
+                                            <input @bind="_inputText[input.Id]" @bind:event="oninput"
+                                                   @onkeydown:stopPropagation="true" placeholder="Enter value…" />
+                                            break;
+                                        case StepInputType.Number:
+                                            <input type="number" step="any" @bind="_inputText[input.Id]" @bind:event="oninput"
+                                                   @onkeydown:stopPropagation="true" placeholder="Enter number…" />
+                                            break;
+                                        case StepInputType.PassFail:
+                                            <div class="passfail">
+                                                <button type="button" class="pf @(_inputText[input.Id] == "Pass" ? "pf-pass-on" : "")"
+                                                        @onclick="() => SetPassFail(input.Id, true)">Pass</button>
+                                                <button type="button" class="pf @(_inputText[input.Id] == "Fail" ? "pf-fail-on" : "")"
+                                                        @onclick="() => SetPassFail(input.Id, false)">Fail</button>
+                                            </div>
+                                            break;
+                                        case StepInputType.Checklist:
+                                            <div class="checklist">
+                                                @foreach (var opt in ChecklistItems(input))
+                                                {
+                                                    <label class="check">
+                                                        <input type="checkbox" checked="@_inputChecks[input.Id].Contains(opt)"
+                                                               @onchange="e => ToggleCheck(input.Id, opt, e)" /> @opt
+                                                    </label>
+                                                }
+                                            </div>
+                                            break;
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
 
-                @if (_currentStep.RequiresScan)
-                {
-                    <div class="step-scan">
-                        <p>Scan the unit's order number to complete this step.</p>
-                        <input @ref="_stepScanInput" @bind="_stepScanEntry" @bind:event="oninput"
-                               placeholder="Scan unit…"
-                               @onkeydown="HandleStepScanKey" @onkeydown:stopPropagation="true" />
-                        <button class="advance" @onclick="() => AdvanceAsync()"
-                                disabled="@(_advancing || string.IsNullOrWhiteSpace(_stepScanEntry))">
-                            Verify &amp; advance
-                        </button>
-                    </div>
-                }
-                else
-                {
-                    <button class="advance" @onclick="() => AdvanceAsync()" disabled="@_advancing">
-                        Advance (Enter)
-                    </button>
-                }
+                <button class="advance" @onclick="() => AdvanceAsync()" disabled="@(_advancing || !AllRequiredFilled)">
+                    Advance@(_currentStep.Inputs.Count == 0 ? " (Enter)" : "")
+                </button>
             }
 
             <div class="unit-actions">
@@ -128,11 +170,11 @@ else
                 @if (EarlierStages.Count > 0)
                 {
                     <button class="unit-action" @onclick="() => _showSendBack = !_showSendBack" disabled="@_advancing">
-                        Send back…
+                        Send back...
                     </button>
                 }
                 <button class="unit-action scrap" @onclick="ScrapAsync" disabled="@_advancing"
-                        title="Failed and physically junked — removes the unit from the line">
+                        title="Failed and physically junked - removes the unit from the line">
                     @(_confirmScrap ? "Confirm scrap?" : "Scrap")
                 </button>
             </div>
@@ -178,26 +220,27 @@ else
     private string? _errorMessage;
     private ElementReference _rootElement;
 
-    // The scoped RelayService (and its DbContext) is shared with the fire-and-forget refresh that
-    // OnStageChanged kicks off. On a higher-latency provider (SQL Server) that refresh can overlap
-    // an in-flight action and EF throws "a second operation was started on this context instance".
-    // This gate serializes every DbContext-touching sequence so at most one runs at a time.
+    // Operator answers to the current step's inputs, seeded per step (indexer @bind needs the key
+    // present up-front). _inputText covers Text/Number/PassFail; _inputChecks holds a checklist's
+    // ticked items. Rebuilt each time the current step changes (see UpdateCurrentStep).
+    private readonly Dictionary<int, string> _inputText = [];
+    private readonly Dictionary<int, HashSet<string>> _inputChecks = [];
+
     private readonly SemaphoreSlim _dbGate = new(1, 1);
 
     private string _prebuildEntry = string.Empty;
     private ElementReference _prebuildInput;
     private bool _prebuildInputFocused;
+    private string _stageScanEntry = string.Empty;
+    private ElementReference _stageScanInput;
+    private bool _stageScanFocused;
     private bool _focusRootPending;
     private int? _staffNumber;
     private bool _holdAutoClaim;
     private bool _showSendBack;
     private int _sendBackTargetId;
     private bool _confirmScrap;
-    private string _stepScanEntry = string.Empty;
-    private ElementReference _stepScanInput;
-    private bool _stepScanFocused;
 
-    // Stages before this one, nearest first — the send-back targets.
     private List<Stage> EarlierStages =>
         _station is null
             ? []
@@ -206,29 +249,26 @@ else
                 .OrderByDescending(s => s.OrderIndex)
                 .ToList();
 
-    // The first stage of the workflow (lowest OrderIndex) — where a prebuild is scanned to start a unit.
     private bool IsEntryStage =>
         _station is not null
         && _station.Stage.OrderIndex == _station.Stage.Workflow.Stages.Min(s => s.OrderIndex);
 
-    // A prebuild-requiring workflow's entry station, sitting idle, offers the scan box instead of
-    // pulling from a queue — units in these workflows are born from the scan.
     private bool ShowPrebuildScan =>
         _station is not null && _activeWorkItem is null
         && _station.Stage.Workflow.RequiresPrebuild && IsEntryStage;
 
-    // A free-run workflow's entry station, sitting idle, offers a "Start run" button — units in
-    // these workflows are born from the button, not a queue.
     private bool ShowAdHocStart =>
         _station is not null && _activeWorkItem is null
         && _station.Stage.Workflow.AllowAdHocStart && IsEntryStage;
+
+    private bool ShowStageScan =>
+        _station is not null && _activeWorkItem is null
+        && _station.Stage.RequiresScan && !ShowPrebuildScan && !ShowAdHocStart;
 
     protected override async Task OnInitializedAsync()
     {
         Notifier.StageChanged += OnStageChanged;
 
-        // Hold the gate across the whole load: the StageChanged subscription is already live, so a
-        // notify from another circuit could otherwise refresh this component's DbContext mid-load.
         await _dbGate.WaitAsync();
         try
         {
@@ -239,7 +279,6 @@ else
                 return;
             }
 
-            // URL-guard: a level-1 operator can only run stations of a workflow assigned to them.
             var user = AuthState is null ? null : (await AuthState).User;
             _staffNumber = user?.GetStaffNumber() is int n and > 0 ? n : null;
             if (user is not null && user.GetLevel() <= AccessLevel.Staff)
@@ -267,22 +306,18 @@ else
             await _rootElement.FocusAsync();
         }
 
-        // Put the cursor in the scan box so a barcode scanner's keystrokes land there directly.
         if (ShowPrebuildScan && !_prebuildInputFocused)
         {
             _prebuildInputFocused = true;
             await _prebuildInput.FocusAsync();
         }
 
-        // Same for a scan-required step's verify box.
-        if (_currentStep?.RequiresScan == true && !_stepScanFocused)
+        if (ShowStageScan && !_stageScanFocused)
         {
-            _stepScanFocused = true;
-            await _stepScanInput.FocusAsync();
+            _stageScanFocused = true;
+            await _stageScanInput.FocusAsync();
         }
 
-        // After a scan creates the unit, the scan box is gone — hand focus back to the station div
-        // so Enter advances steps again.
         if (_focusRootPending)
         {
             _focusRootPending = false;
@@ -299,23 +334,18 @@ else
 
         _activeWorkItem = await Relay.GetActiveWorkItemAsync(_station.Id);
 
-        // A prebuild/free-run entry station doesn't auto-claim from a queue — its units come from the
-        // scan or the Start-run button. Every other station pulls the next queued unit as before —
-        // unless the operator just released a unit here (_holdAutoClaim), in which case pausing is the
-        // whole point: without it, this station would win the race and grab the released unit right back.
         var entryStationNoAutoClaim =
             IsEntryStage && (_station.Stage.Workflow.RequiresPrebuild || _station.Stage.Workflow.AllowAdHocStart);
-        if (_activeWorkItem is null && !_holdAutoClaim && !entryStationNoAutoClaim)
+        if (_activeWorkItem is null && !_holdAutoClaim && !entryStationNoAutoClaim && !_station.Stage.RequiresScan)
         {
             _activeWorkItem = await Relay.ClaimNextAsync(_station.Id);
         }
 
         _queueDepth = await Relay.GetQueueDepthAsync(_station.StageId);
         _prebuildInputFocused = false;
+        _stageScanFocused = false;
         _showSendBack = false;
         _confirmScrap = false;
-        _stepScanEntry = string.Empty;
-        _stepScanFocused = false;
 
         UpdateCurrentStep();
     }
@@ -335,7 +365,58 @@ else
         var completedStepIds = _activeWorkItem.StepCompletions.Select(sc => sc.StepId).ToHashSet();
         _currentStep = orderedSteps.FirstOrDefault(s => !completedStepIds.Contains(s.Id));
         _stepIndex = _currentStep is null ? orderedSteps.Count : orderedSteps.FindIndex(s => s.Id == _currentStep.Id);
+
+        SeedInputState();
     }
+
+    // Fresh, empty answer state for the current step's inputs. Rebuilt on every step change so a
+    // previous step's entries don't leak, and every bound key exists before the input renders.
+    private void SeedInputState()
+    {
+        _inputText.Clear();
+        _inputChecks.Clear();
+        if (_currentStep is null)
+        {
+            return;
+        }
+        foreach (var input in _currentStep.Inputs)
+        {
+            _inputText[input.Id] = string.Empty;
+            if (input.Type == StepInputType.Checklist)
+            {
+                _inputChecks[input.Id] = [];
+            }
+        }
+    }
+
+    private static IEnumerable<string> ChecklistItems(StepInput input) =>
+        string.IsNullOrWhiteSpace(input.Options)
+            ? []
+            : input.Options.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0);
+
+    private void ToggleCheck(int inputId, string option, ChangeEventArgs e)
+    {
+        var set = _inputChecks[inputId];
+        if (e.Value is true) { set.Add(option); } else { set.Remove(option); }
+    }
+
+    private void SetPassFail(int inputId, bool pass) => _inputText[inputId] = pass ? "Pass" : "Fail";
+
+    // The value each input contributes (checklist = ticked items joined), used for both the
+    // "all required filled" gate and the payload sent to AdvanceAsync.
+    private string InputValue(StepInput input) => input.Type == StepInputType.Checklist
+        ? string.Join('\n', ChecklistItems(input).Where(o => _inputChecks[input.Id].Contains(o)))
+        : (_inputText.GetValueOrDefault(input.Id) ?? string.Empty).Trim();
+
+    private bool AllRequiredFilled =>
+        _currentStep is null || _currentStep.Inputs
+            .Where(i => i.Required)
+            .All(i => InputValue(i).Length > 0);
+
+    private List<StepInputValue> BuildInputValues() =>
+        _currentStep is null
+            ? []
+            : _currentStep.Inputs.Select(i => new StepInputValue(i.Id, InputValue(i))).ToList();
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
@@ -353,19 +434,19 @@ else
             await StartAdHocAsync();
             return;
         }
-        if (_currentStep?.RequiresScan == true)
+        // Steps with inputs advance only via the button — Enter would fire mid-typing.
+        if (_currentStep is not null && _currentStep.Inputs.Count > 0)
         {
-            return; // scan-required steps only advance from the scan box
+            return;
         }
         await AdvanceAsync();
     }
 
-    private async Task HandleStepScanKey(KeyboardEventArgs e)
+    private async Task HandleStageScanKey(KeyboardEventArgs e)
     {
-        // Barcode scanners emit the code then an Enter.
-        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_stepScanEntry))
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_stageScanEntry))
         {
-            await AdvanceAsync();
+            await StartFromStageScanAsync();
         }
     }
 
@@ -377,9 +458,6 @@ else
 
     private async Task ReleaseAsync()
     {
-        // Hold BEFORE the service call: releasing notifies this stage, and this component's
-        // own StageChanged handler runs inline during that notify — with the flag not yet set
-        // it would auto-claim the just-released unit straight back.
         _holdAutoClaim = true;
         await RunUnitActionAsync(async () =>
         {
@@ -407,7 +485,6 @@ else
 
     private async Task ScrapAsync()
     {
-        // Two-click confirm: scrapping is terminal, and this button lives near Advance.
         if (!_confirmScrap)
         {
             _confirmScrap = true;
@@ -437,7 +514,7 @@ else
         }
         catch (DbUpdateConcurrencyException)
         {
-            _errorMessage = "This unit changed elsewhere — refreshed.";
+            _errorMessage = "This unit changed elsewhere - refreshed.";
             await RefreshAsync();
         }
         finally
@@ -449,7 +526,6 @@ else
 
     private async Task HandlePrebuildKey(KeyboardEventArgs e)
     {
-        // Barcode scanners emit the code then an Enter — so Enter in the scan box submits it.
         if (e.Key == "Enter")
         {
             await StartFromPrebuildAsync();
@@ -471,11 +547,41 @@ else
             await Relay.CreateFromPrebuildAsync(_station.Id, _prebuildEntry);
             _prebuildEntry = string.Empty;
             await RefreshAsync();
-            _focusRootPending = true;  // scan box is about to disappear — refocus the station for Enter
+            _focusRootPending = true;
         }
         catch (RelayOperationException ex)
         {
             _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _dbGate.Release();
+            _advancing = false;
+        }
+    }
+
+    private async Task StartFromStageScanAsync()
+    {
+        if (_advancing || _station is null || string.IsNullOrWhiteSpace(_stageScanEntry))
+        {
+            return;
+        }
+
+        _advancing = true;
+        _errorMessage = null;
+        await _dbGate.WaitAsync();
+        try
+        {
+            await Relay.ClaimByScanAsync(_station.Id, _stageScanEntry);
+            _stageScanEntry = string.Empty;
+            await RefreshAsync();
+            _focusRootPending = true;
+        }
+        catch (RelayOperationException ex)
+        {
+            _errorMessage = ex.Message;
+            _stageScanEntry = string.Empty;
+            _stageScanFocused = false;
         }
         finally
         {
@@ -512,10 +618,6 @@ else
 
     private async Task AdvanceAsync()
     {
-        // Disabling the button on this flag for the duration of the call is the debounce
-        // (FR-11): a request is always in flight for at most tens of ms, so re-enabling
-        // immediately after is more responsive than a fixed lockout while still making a
-        // double Enter/click a no-op.
         if (_advancing || _activeWorkItem is null || _station is null)
         {
             return;
@@ -526,22 +628,16 @@ else
         await _dbGate.WaitAsync();
         try
         {
-            var scanned = _currentStep?.RequiresScan == true ? _stepScanEntry : null;
-            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id, _staffNumber, scanned);
-            // Whatever the outcome — more steps left, handed off, or completed — refreshing
-            // shows the right next thing: the next step, or this station pulling its next unit.
+            await Relay.AdvanceAsync(_activeWorkItem.Id, _station.Id, _staffNumber, BuildInputValues());
             await RefreshAsync();
         }
         catch (RelayOperationException ex)
         {
             _errorMessage = ex.Message;
-            // Clear a rejected scan so the next one starts clean, and refocus the box.
-            _stepScanEntry = string.Empty;
-            _stepScanFocused = false;
         }
         catch (DbUpdateConcurrencyException)
         {
-            _errorMessage = "This unit was already advanced elsewhere — refreshed.";
+            _errorMessage = "This unit was already advanced elsewhere - refreshed.";
             await RefreshAsync();
         }
         finally
@@ -565,9 +661,6 @@ else
         }));
     }
 
-    // Runs DbContext-touching work under the shared gate so it can't overlap another sequence on
-    // the same scoped DbContext (see _dbGate). RefreshAsync itself never takes the gate, so callers
-    // already holding it must not route through here.
     private async Task RunGuardedAsync(Func<Task> work)
     {
         await _dbGate.WaitAsync();

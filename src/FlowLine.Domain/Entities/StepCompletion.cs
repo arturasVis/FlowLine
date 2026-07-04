@@ -32,4 +32,7 @@ public class StepCompletion
     // DateTime, not DateTimeOffset: SQLite's EF Core provider can't translate ORDER BY
     // on DateTimeOffset columns (needed for timing-review queries, PRD M5). Always UTC.
     public DateTime CompletedAtUtc { get; set; }
+
+    /// <summary>The operator's recorded answers to this step's inputs, if any.</summary>
+    public List<StepCompletionValue> Values { get; set; } = [];
 }

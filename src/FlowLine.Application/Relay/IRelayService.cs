@@ -28,11 +28,13 @@ public interface IRelayService
     /// Staff number of the operator completing the step, recorded on the StepCompletion for
     /// timing/attribution reporting. Null if no operator identity is available.
     /// </param>
-    /// <param name="scannedCode">
-    /// The barcode scanned by the operator. Required to match the WorkItem's OrderNumber
-    /// (case-insensitive) when the step being completed has <c>RequiresScan</c>; ignored otherwise.
+    /// <param name="inputValues">
+    /// The operator's answers to the step's configured <see cref="Domain.Entities.StepInput"/>s.
+    /// Every required input must have a non-empty value and every Number input must parse, or the
+    /// call fails with <see cref="RelayOperationException"/> and nothing is recorded. Values for
+    /// ids that aren't inputs of this step are ignored.
     /// </param>
-    Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, string? scannedCode = null, CancellationToken cancellationToken = default);
+    Task<AdvanceResult> AdvanceAsync(int workItemId, int? stationId, int? staffNumber = null, IReadOnlyCollection<StepInputValue>? inputValues = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Releases an InProgress WorkItem's claim back to the *end* of its current stage's queue
@@ -74,6 +76,13 @@ public interface IRelayService
     /// loaded, or null if the station has nothing claimed (e.g. after a page reload mid-stage).
     /// </summary>
     Task<WorkItem?> GetActiveWorkItemAsync(int stationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Claims the oldest queued WorkItem at a scan-required stage whose OrderNumber matches the
+    /// scanned code. This is the stage-level right-unit gate: stations on such stages do not
+    /// auto-claim; the scan chooses the specific queued unit to work.
+    /// </summary>
+    Task<WorkItem> ClaimByScanAsync(int stationId, string scannedCode, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Starts a unit from a scanned ID at a prebuild-requiring workflow's first station. Two

@@ -8,8 +8,12 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
 {
     public Task<List<Workflow>> GetWorkflowsAsync(CancellationToken cancellationToken = default)
     {
+        // Steps + Stations are loaded so the list can show a runnable/not-runnable badge
+        // (see WorkflowReadiness) without a second round of queries.
         return db.Workflows
-            .Include(w => w.Stages)
+            .Include(w => w.Stages).ThenInclude(s => s.Steps)
+            .Include(w => w.Stages).ThenInclude(s => s.Stations)
+            .AsSplitQuery()
             .OrderByDescending(w => w.Id)
             .ToListAsync(cancellationToken);
     }
@@ -18,6 +22,8 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
     {
         return db.Workflows
             .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.MediaAssets)
+            .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.Inputs)
+            .Include(w => w.Stages).ThenInclude(s => s.Stations)
             .AsSplitQuery()
             .SingleOrDefaultAsync(w => w.Id == workflowId, cancellationToken);
     }
@@ -77,6 +83,7 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
     {
         var source = await db.Workflows
             .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.MediaAssets)
+            .Include(w => w.Stages).ThenInclude(s => s.Steps).ThenInclude(st => st.Inputs)
             .AsSplitQuery()
             .SingleOrDefaultAsync(w => w.Id == workflowId, cancellationToken)
             ?? throw new WorkflowBuilderException($"Workflow {workflowId} does not exist.");
@@ -92,7 +99,13 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
 
         foreach (var stage in source.Stages.OrderBy(s => s.OrderIndex))
         {
-            var stageClone = new Stage { Workflow = clone, Name = stage.Name, OrderIndex = stage.OrderIndex };
+            var stageClone = new Stage
+            {
+                Workflow = clone,
+                Name = stage.Name,
+                OrderIndex = stage.OrderIndex,
+                RequiresScan = stage.RequiresScan,
+            };
             clone.Stages.Add(stageClone);
 
             foreach (var step in stage.Steps.OrderBy(s => s.OrderIndex))
@@ -103,9 +116,21 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
                     Name = step.Name,
                     Instructions = step.Instructions,
                     OrderIndex = step.OrderIndex,
-                    RequiresScan = step.RequiresScan,
                 };
                 stageClone.Steps.Add(stepClone);
+
+                foreach (var input in step.Inputs.OrderBy(i => i.OrderIndex))
+                {
+                    stepClone.Inputs.Add(new StepInput
+                    {
+                        Step = stepClone,
+                        Label = input.Label,
+                        Type = input.Type,
+                        Required = input.Required,
+                        OrderIndex = input.OrderIndex,
+                        Options = input.Options,
+                    });
+                }
 
                 foreach (var media in step.MediaAssets.OrderBy(m => m.DisplayOrder))
                 {
@@ -146,6 +171,14 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         var stage = await db.Stages.FindAsync([stageId], cancellationToken)
             ?? throw new WorkflowBuilderException($"Stage {stageId} does not exist.");
         stage.Name = name;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task SetStageRequiresScanAsync(int stageId, bool requiresScan, CancellationToken cancellationToken = default)
+    {
+        var stage = await db.Stages.FindAsync([stageId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Stage {stageId} does not exist.");
+        stage.RequiresScan = requiresScan;
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -208,13 +241,12 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         return step;
     }
 
-    public async Task UpdateStepAsync(int stepId, string name, string instructions, bool requiresScan, CancellationToken cancellationToken = default)
+    public async Task UpdateStepAsync(int stepId, string name, string instructions, CancellationToken cancellationToken = default)
     {
         var step = await db.Steps.FindAsync([stepId], cancellationToken)
             ?? throw new WorkflowBuilderException($"Step {stepId} does not exist.");
         step.Name = name;
         step.Instructions = instructions;
-        step.RequiresScan = requiresScan;
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -259,6 +291,107 @@ public class WorkflowBuilderService(FlowLineDbContext db, MediaStorageOptions me
         }
 
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<StepInput> AddStepInputAsync(int stepId, string label, StepInputType type, bool required, string? options, CancellationToken cancellationToken = default)
+    {
+        _ = await db.Steps.FindAsync([stepId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Step {stepId} does not exist.");
+
+        label = (label ?? string.Empty).Trim();
+        if (label.Length == 0)
+        {
+            throw new WorkflowBuilderException("An input needs a label.");
+        }
+
+        var maxOrder = await db.StepInputs
+            .Where(i => i.StepId == stepId)
+            .Select(i => (int?)i.OrderIndex)
+            .MaxAsync(cancellationToken) ?? -1;
+
+        var input = new StepInput
+        {
+            StepId = stepId,
+            Label = label,
+            Type = type,
+            Required = required,
+            Options = NormaliseOptions(type, options),
+            OrderIndex = maxOrder + 1,
+        };
+        db.StepInputs.Add(input);
+        await db.SaveChangesAsync(cancellationToken);
+        return input;
+    }
+
+    public async Task UpdateStepInputAsync(int inputId, string label, StepInputType type, bool required, string? options, CancellationToken cancellationToken = default)
+    {
+        var input = await db.StepInputs.FindAsync([inputId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Input {inputId} does not exist.");
+
+        label = (label ?? string.Empty).Trim();
+        if (label.Length == 0)
+        {
+            throw new WorkflowBuilderException("An input needs a label.");
+        }
+
+        input.Label = label;
+        input.Type = type;
+        input.Required = required;
+        input.Options = NormaliseOptions(type, options);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeleteStepInputAsync(int inputId, CancellationToken cancellationToken = default)
+    {
+        var input = await db.StepInputs.FindAsync([inputId], cancellationToken)
+            ?? throw new WorkflowBuilderException($"Input {inputId} does not exist.");
+
+        db.StepInputs.Remove(input);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // Restrict FK from StepCompletionValue — an input operators have already answered.
+            throw new WorkflowBuilderException(
+                "Can't delete this input — operators have already recorded answers for it.");
+        }
+    }
+
+    public async Task ReorderStepInputsAsync(int stepId, IReadOnlyList<int> orderedInputIds, CancellationToken cancellationToken = default)
+    {
+        var inputs = await db.StepInputs.Where(i => i.StepId == stepId).ToListAsync(cancellationToken);
+
+        if (inputs.Count != orderedInputIds.Count || !inputs.Select(i => i.Id).ToHashSet().SetEquals(orderedInputIds))
+        {
+            throw new WorkflowBuilderException("Reorder must include every input on the step exactly once.");
+        }
+
+        for (var i = 0; i < orderedInputIds.Count; i++)
+        {
+            inputs.Single(x => x.Id == orderedInputIds[i]).OrderIndex = i;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // Checklist keeps its item list; every other type has no options. Trims blank lines so an
+    // empty box doesn't leave a stray checklist item.
+    private static string? NormaliseOptions(StepInputType type, string? options)
+    {
+        if (type != StepInputType.Checklist || string.IsNullOrWhiteSpace(options))
+        {
+            return null;
+        }
+
+        var items = options
+            .Replace("\r\n", "\n")
+            .Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0);
+        var cleaned = string.Join('\n', items);
+        return cleaned.Length == 0 ? null : cleaned;
     }
 
     public async Task<MediaAsset> AddMediaAssetAsync(int stepId, string fileName, Stream content, CancellationToken cancellationToken = default)

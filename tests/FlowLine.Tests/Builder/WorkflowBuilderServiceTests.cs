@@ -360,7 +360,7 @@ public class WorkflowBuilderServiceTests
     }
 
     [Fact]
-    public async Task UpdateStepAsync_SetsRequiresScan_AndDuplicateCopiesIt()
+    public async Task SetStageRequiresScanAsync_SetsRequiresScan_AndDuplicateCopiesIt()
     {
         var (connection, options) = SqliteTestDatabase.Create();
         using (connection)
@@ -371,16 +371,16 @@ public class WorkflowBuilderServiceTests
             {
                 var workflow = await service.CreateWorkflowAsync("WF", null);
                 var stage = await service.AddStageAsync(workflow.Id, "S1");
-                var step = await service.AddStepAsync(stage.Id, "Verify unit", "scan it");
-                Assert.False(step.RequiresScan); // default off
+                await service.AddStepAsync(stage.Id, "Verify unit", "scan it");
+                Assert.False(stage.RequiresScan); // default off
 
-                await service.UpdateStepAsync(step.Id, "Verify unit", "scan it", requiresScan: true);
-                var reloaded = await db.Steps.SingleAsync(s => s.Id == step.Id);
+                await service.SetStageRequiresScanAsync(stage.Id, requiresScan: true);
+                var reloaded = await db.Stages.SingleAsync(s => s.Id == stage.Id);
                 Assert.True(reloaded.RequiresScan);
 
                 var copy = await service.DuplicateWorkflowAsync(workflow.Id, "WF Copy");
-                var copiedStep = await db.Steps.SingleAsync(s => s.Stage.WorkflowId == copy.Id);
-                Assert.True(copiedStep.RequiresScan); // deep clone keeps the flag
+                var copiedStage = await db.Stages.SingleAsync(s => s.WorkflowId == copy.Id);
+                Assert.True(copiedStage.RequiresScan); // deep clone keeps the flag
             }
         }
     }
@@ -416,6 +416,147 @@ public class WorkflowBuilderServiceTests
                 var reloadedCopy = await db.Workflows.SingleAsync(w => w.Id == copy.Id);
                 Assert.True(reloadedCopy.AllowAdHocStart);
                 Assert.False(reloadedCopy.RequiresPrebuild);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task StepInputs_AddUpdateReorderDelete_RoundTrip()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            var (service, db, _, cleanup) = CreateService(options);
+            using (cleanup)
+            using (db)
+            {
+                var workflow = await service.CreateWorkflowAsync("WF", null);
+                var stage = await service.AddStageAsync(workflow.Id, "S1");
+                var step = await service.AddStepAsync(stage.Id, "Verify", "check it");
+
+                var serial = await service.AddStepInputAsync(step.Id, "Serial", StepInputType.Text, required: true, options: null);
+                var boot = await service.AddStepInputAsync(step.Id, "Boot", StepInputType.PassFail, required: false, options: null);
+                // Checklist options are normalised (blank lines trimmed); non-checklist options dropped.
+                var checks = await service.AddStepInputAsync(step.Id, "Checks", StepInputType.Checklist, required: false, options: "a\n\n b \n");
+                Assert.Equal("a\nb", checks.Options);
+                Assert.Null(serial.Options);
+
+                // Update: rename + flip required + change type (drops the now-irrelevant options).
+                await service.UpdateStepInputAsync(checks.Id, "Checks v2", StepInputType.Text, required: true, options: "ignored");
+                var reChecks = await db.StepInputs.SingleAsync(i => i.Id == checks.Id);
+                Assert.Equal("Checks v2", reChecks.Label);
+                Assert.True(reChecks.Required);
+                Assert.Equal(StepInputType.Text, reChecks.Type);
+                Assert.Null(reChecks.Options);
+
+                // Reorder: put Boot first.
+                await service.ReorderStepInputsAsync(step.Id, [boot.Id, serial.Id, checks.Id]);
+                var ordered = await db.StepInputs.Where(i => i.StepId == step.Id).OrderBy(i => i.OrderIndex).Select(i => i.Id).ToListAsync();
+                Assert.Equal([boot.Id, serial.Id, checks.Id], ordered);
+
+                await service.DeleteStepInputAsync(boot.Id);
+                Assert.False(await db.StepInputs.AnyAsync(i => i.Id == boot.Id));
+                Assert.Equal(2, await db.StepInputs.CountAsync(i => i.StepId == step.Id));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AddStepInput_BlankLabel_Throws()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            var (service, db, _, cleanup) = CreateService(options);
+            using (cleanup)
+            using (db)
+            {
+                var workflow = await service.CreateWorkflowAsync("WF", null);
+                var stage = await service.AddStageAsync(workflow.Id, "S1");
+                var step = await service.AddStepAsync(stage.Id, "Verify", "check it");
+
+                await Assert.ThrowsAsync<WorkflowBuilderException>(
+                    () => service.AddStepInputAsync(step.Id, "   ", StepInputType.Text, false, null));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteStepInput_WithRecordedAnswers_Throws()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            var (service, db, _, cleanup) = CreateService(options);
+            using (cleanup)
+            using (db)
+            {
+                var workflow = await service.CreateWorkflowAsync("WF", null);
+                var stage = await service.AddStageAsync(workflow.Id, "S1");
+                var step = await service.AddStepAsync(stage.Id, "Verify", "check it");
+                var input = await service.AddStepInputAsync(step.Id, "Serial", StepInputType.Text, true, null);
+
+                // Seed a recorded answer through a *separate* DbContext so the FK Restrict guard is
+                // what fires (see the DeleteStep guard test for why a shared tracker would mask it).
+                using (var seedDb = new FlowLineDbContext(options))
+                {
+                    var workItem = new WorkItem
+                    {
+                        WorkflowId = workflow.Id,
+                        CurrentStageId = stage.Id,
+                        OrderNumber = "ORD-1",
+                        Sku = "SKU-1",
+                        Quantity = 1,
+                    };
+                    seedDb.WorkItems.Add(workItem);
+                    await seedDb.SaveChangesAsync();
+
+                    var completion = new StepCompletion { WorkItemId = workItem.Id, StepId = step.Id, CompletedAtUtc = DateTime.UtcNow };
+                    seedDb.StepCompletions.Add(completion);
+                    await seedDb.SaveChangesAsync();
+
+                    seedDb.StepCompletionValues.Add(new StepCompletionValue
+                    {
+                        StepCompletionId = completion.Id,
+                        StepInputId = input.Id,
+                        Value = "SN-1",
+                    });
+                    await seedDb.SaveChangesAsync();
+                }
+
+                await Assert.ThrowsAsync<WorkflowBuilderException>(() => service.DeleteStepInputAsync(input.Id));
+                Assert.True(await db.StepInputs.AnyAsync(i => i.Id == input.Id));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DuplicateWorkflow_CopiesStepInputs()
+    {
+        var (connection, options) = SqliteTestDatabase.Create();
+        using (connection)
+        {
+            var (service, db, _, cleanup) = CreateService(options);
+            using (cleanup)
+            using (db)
+            {
+                var workflow = await service.CreateWorkflowAsync("WF", null);
+                var stage = await service.AddStageAsync(workflow.Id, "S1");
+                var step = await service.AddStepAsync(stage.Id, "Verify", "check it");
+                await service.AddStepInputAsync(step.Id, "Serial", StepInputType.Text, required: true, options: null);
+                await service.AddStepInputAsync(step.Id, "Checks", StepInputType.Checklist, required: false, options: "a\nb");
+
+                var copy = await service.DuplicateWorkflowAsync(workflow.Id, "WF Copy");
+
+                var copiedInputs = await db.StepInputs
+                    .Where(i => i.Step.Stage.WorkflowId == copy.Id)
+                    .OrderBy(i => i.OrderIndex)
+                    .ToListAsync();
+                Assert.Equal(2, copiedInputs.Count);
+                Assert.Equal("Serial", copiedInputs[0].Label);
+                Assert.True(copiedInputs[0].Required);
+                Assert.Equal(StepInputType.Checklist, copiedInputs[1].Type);
+                Assert.Equal("a\nb", copiedInputs[1].Options);
             }
         }
     }

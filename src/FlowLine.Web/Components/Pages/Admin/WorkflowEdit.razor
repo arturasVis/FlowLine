@@ -1,7 +1,9 @@
 @page "/admin/workflows/{WorkflowId:int}"
 @rendermode InteractiveServer
 @attribute [Authorize(Policy = FlowLinePolicies.CanManage)]
+@using FlowLine.Application.Stations
 @inject IWorkflowBuilderService Builder
+@inject IStationService Stations
 
 <PageTitle>@(_workflow?.Name ?? "Workflow") — Admin</PageTitle>
 
@@ -35,6 +37,26 @@ else
             Free-run / training mode — start runs without an order (entry station gets a "Start run" button)
         </label>
 
+        @{
+            var readiness = WorkflowReadiness.For(_workflow);
+        }
+        @if (readiness.IsRunnable)
+        {
+            <p class="readiness ready">✓ Ready to run</p>
+        }
+        else
+        {
+            <div class="readiness not-ready">
+                <strong>⚠ Not ready to run:</strong>
+                <ul>
+                    @foreach (var problem in readiness.Problems)
+                    {
+                        <li>@problem</li>
+                    }
+                </ul>
+            </div>
+        }
+
         @if (_error is not null)
         {
             <p class="error">@_error</p>
@@ -46,19 +68,45 @@ else
                 <header class="stage-card-header">
                     <input @bind="stage.Name" />
                     <button @onclick="() => SaveStageAsync(stage)">Save</button>
+                    <label class="scan-flag" title="Operators must scan an order number to claim a queued unit at this stage">
+                        <input type="checkbox" checked="@stage.RequiresScan" @onchange="e => ToggleStageScanAsync(stage, e)" />
+                        Requires scan to claim
+                    </label>
                     <button @onclick="() => MoveStageAsync(stage, -1)" disabled="@(stage.OrderIndex == 0)">Move stage up</button>
                     <button @onclick="() => MoveStageAsync(stage, 1)" disabled="@(stage.OrderIndex == _workflow.Stages.Count - 1)">Move stage down</button>
                     <button class="danger" @onclick="() => DeleteStageAsync(stage)">Delete stage</button>
                 </header>
+
+                @if (stage.Stations.Count == 0)
+                {
+                    <p class="stage-warning">⚠ No station mans this stage — units will stall here until you add one below.</p>
+                }
+                @if (stage.Steps.Count == 0)
+                {
+                    <p class="stage-warning">⚠ This stage has no steps yet.</p>
+                }
+
+                <div class="stage-stations">
+                    <span class="stations-label">Stations:</span>
+                    @foreach (var station in stage.Stations.OrderBy(s => s.Name).ToList())
+                    {
+                        <span class="station-chip">
+                            <input @bind="station.Name" />
+                            <button @onclick="() => SaveStationAsync(station)" title="Rename">Save</button>
+                            <button class="danger" @onclick="() => DeleteStationAsync(station)" title="Remove station">✕</button>
+                        </span>
+                    }
+                    <span class="add-station">
+                        <input @bind="_newStationNames[stage.Id]" placeholder="New station name" />
+                        <button @onclick="() => AddStationAsync(stage)">Add station</button>
+                    </span>
+                </div>
 
                 @foreach (var step in stage.Steps.OrderBy(s => s.OrderIndex).ToList())
                 {
                     <div class="step-card">
                         <input @bind="step.Name" placeholder="Step name" />
                         <textarea @bind="step.Instructions" placeholder="Instructions"></textarea>
-                        <label class="scan-flag" title="The operator must scan the unit's order-number barcode to complete this step">
-                            <input type="checkbox" @bind="step.RequiresScan" /> Requires scanning the unit
-                        </label>
                         <div class="step-card-actions">
                             <button @onclick="() => SaveStepAsync(step)">Save</button>
                             <button @onclick="() => MoveStepAsync(stage, step, -1)" disabled="@(step.OrderIndex == 0)">Move step up</button>
@@ -75,6 +123,42 @@ else
                                 </div>
                             }
                             <InputFile OnChange="@(e => UploadMediaAsync(step, e))" />
+                        </div>
+
+                        <div class="inputs-editor">
+                            <span class="inputs-label">Data the operator records:</span>
+                            @foreach (var input in step.Inputs.OrderBy(i => i.OrderIndex).ToList())
+                            {
+                                <div class="input-row">
+                                    <input @bind="input.Label" placeholder="Label" />
+                                    <select @bind="input.Type">
+                                        <option value="@StepInputType.Text">Text</option>
+                                        <option value="@StepInputType.Number">Number</option>
+                                        <option value="@StepInputType.PassFail">Pass / Fail</option>
+                                        <option value="@StepInputType.Checklist">Checklist</option>
+                                    </select>
+                                    <label class="req-flag"><input type="checkbox" @bind="input.Required" /> required</label>
+                                    @if (input.Type == StepInputType.Checklist)
+                                    {
+                                        <textarea @bind="input.Options" placeholder="One checklist item per line"></textarea>
+                                    }
+                                    <button @onclick="() => SaveInputAsync(input)">Save</button>
+                                    <button @onclick="() => MoveInputAsync(step, input, -1)" disabled="@(input.OrderIndex == 0)">↑</button>
+                                    <button @onclick="() => MoveInputAsync(step, input, 1)" disabled="@(input.OrderIndex == step.Inputs.Count - 1)">↓</button>
+                                    <button class="danger" @onclick="() => DeleteInputAsync(input)" title="Remove input">✕</button>
+                                </div>
+                            }
+                            <div class="add-input">
+                                <input @bind="_newInputLabels[step.Id]" placeholder="New input label" />
+                                <select @bind="_newInputTypes[step.Id]">
+                                    <option value="@StepInputType.Text">Text</option>
+                                    <option value="@StepInputType.Number">Number</option>
+                                    <option value="@StepInputType.PassFail">Pass / Fail</option>
+                                    <option value="@StepInputType.Checklist">Checklist</option>
+                                </select>
+                                <label class="req-flag"><input type="checkbox" @bind="_newInputRequired[step.Id]" /> required</label>
+                                <button @onclick="() => AddInputAsync(step)">Add input</button>
+                            </div>
                         </div>
                     </div>
                 }
@@ -102,6 +186,11 @@ else
     private string? _error;
     private string _newStageName = string.Empty;
     private readonly Dictionary<int, string> _newStepNames = [];
+    private readonly Dictionary<int, string> _newStationNames = [];
+    // Per-step "new input" draft (keyed by step id; seeded in LoadAsync for indexer @bind).
+    private readonly Dictionary<int, string> _newInputLabels = [];
+    private readonly Dictionary<int, StepInputType> _newInputTypes = [];
+    private readonly Dictionary<int, bool> _newInputRequired = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -120,8 +209,54 @@ else
             foreach (var stage in _workflow.Stages)
             {
                 _newStepNames.TryAdd(stage.Id, string.Empty);
+                _newStationNames.TryAdd(stage.Id, string.Empty);
+                foreach (var step in stage.Steps)
+                {
+                    _newInputLabels.TryAdd(step.Id, string.Empty);
+                    _newInputTypes.TryAdd(step.Id, StepInputType.Text);
+                    _newInputRequired.TryAdd(step.Id, false);
+                }
             }
         }
+    }
+
+    private async Task AddInputAsync(Step step)
+    {
+        var label = _newInputLabels.GetValueOrDefault(step.Id, string.Empty);
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return;
+        }
+        var type = _newInputTypes.GetValueOrDefault(step.Id, StepInputType.Text);
+        var required = _newInputRequired.GetValueOrDefault(step.Id);
+        await RunAsync(() => Builder.AddStepInputAsync(step.Id, label.Trim(), type, required, null));
+        _newInputLabels[step.Id] = string.Empty;
+        _newInputRequired[step.Id] = false;
+        await LoadAsync();
+    }
+
+    private Task SaveInputAsync(StepInput input) =>
+        RunAsync(() => Builder.UpdateStepInputAsync(input.Id, input.Label, input.Type, input.Required, input.Options));
+
+    private async Task DeleteInputAsync(StepInput input)
+    {
+        await RunAsync(() => Builder.DeleteStepInputAsync(input.Id));
+        await LoadAsync();
+    }
+
+    private async Task MoveInputAsync(Step step, StepInput input, int direction)
+    {
+        var ordered = step.Inputs.OrderBy(i => i.OrderIndex).Select(i => i.Id).ToList();
+        var index = ordered.IndexOf(input.Id);
+        var swapWith = index + direction;
+        if (swapWith < 0 || swapWith >= ordered.Count)
+        {
+            return;
+        }
+
+        (ordered[index], ordered[swapWith]) = (ordered[swapWith], ordered[index]);
+        await RunAsync(() => Builder.ReorderStepInputsAsync(step.Id, ordered));
+        await LoadAsync();
     }
 
     private Task SaveWorkflowAsync() =>
@@ -151,8 +286,36 @@ else
     private Task SaveStageAsync(Stage stage) =>
         RunAsync(() => Builder.UpdateStageAsync(stage.Id, stage.Name));
 
+    private async Task ToggleStageScanAsync(Stage stage, ChangeEventArgs e)
+    {
+        stage.RequiresScan = e.Value is true;
+        await RunAsync(() => Builder.SetStageRequiresScanAsync(stage.Id, stage.RequiresScan));
+    }
+
+    private async Task AddStationAsync(Stage stage)
+    {
+        var name = _newStationNames.GetValueOrDefault(stage.Id, string.Empty);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        await RunAsync(() => Stations.CreateStationAsync(stage.Id, name.Trim()));
+        _newStationNames[stage.Id] = string.Empty;
+        await LoadAsync();
+    }
+
+    private Task SaveStationAsync(Station station) =>
+        RunAsync(() => Stations.UpdateStationAsync(station.Id, station.Name));
+
+    private async Task DeleteStationAsync(Station station)
+    {
+        await RunAsync(() => Stations.DeleteStationAsync(station.Id));
+        await LoadAsync();
+    }
+
     private Task SaveStepAsync(Step step) =>
-        RunAsync(() => Builder.UpdateStepAsync(step.Id, step.Name, step.Instructions, step.RequiresScan));
+        RunAsync(() => Builder.UpdateStepAsync(step.Id, step.Name, step.Instructions));
 
     private async Task AddStageAsync()
     {
@@ -246,6 +409,10 @@ else
             await action();
         }
         catch (WorkflowBuilderException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (StationServiceException ex)
         {
             _error = ex.Message;
         }

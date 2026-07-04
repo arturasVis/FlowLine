@@ -15,3 +15,7 @@ public enum AdvanceOutcome
 }
 
 public record AdvanceResult(AdvanceOutcome Outcome, WorkItem WorkItem, Step CompletedStep);
+
+/// <summary>One operator answer supplied to <see cref="IRelayService.AdvanceAsync"/> — the id of the
+/// step's <see cref="Domain.Entities.StepInput"/> and the recorded value.</summary>
+public record StepInputValue(int StepInputId, string Value);

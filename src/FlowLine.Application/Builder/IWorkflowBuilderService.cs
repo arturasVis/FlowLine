@@ -10,10 +10,10 @@ namespace FlowLine.Application.Builder;
 /// </summary>
 public interface IWorkflowBuilderService
 {
-    /// <summary>All workflows, newest first — for the workflow list screen. No stages/steps loaded.</summary>
+    /// <summary>All workflows, newest first, with stages/steps/stations loaded for readiness badges.</summary>
     Task<List<Workflow>> GetWorkflowsAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>One workflow with its Stages, Steps, and MediaAssets all loaded and ordered, for the editor screen.</summary>
+    /// <summary>One workflow with its Stages, Steps, MediaAssets, and Stations loaded for the editor screen.</summary>
     Task<Workflow?> GetWorkflowAsync(int workflowId, CancellationToken cancellationToken = default);
 
     Task<Workflow> CreateWorkflowAsync(string name, string? description, CancellationToken cancellationToken = default);
@@ -45,6 +45,9 @@ public interface IWorkflowBuilderService
 
     Task UpdateStageAsync(int stageId, string name, CancellationToken cancellationToken = default);
 
+    /// <summary>Toggles scan-to-claim for a stage. Scan-required stages do not auto-claim from their queue.</summary>
+    Task SetStageRequiresScanAsync(int stageId, bool requiresScan, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Throws <see cref="WorkflowBuilderException"/> if the stage still has WorkItems on it
     /// or its steps have recorded StepCompletions (the FK Restrict guard tripped).
@@ -57,13 +60,24 @@ public interface IWorkflowBuilderService
     /// <summary>Appends a new Step at the end of the stage.</summary>
     Task<Step> AddStepAsync(int stageId, string name, string instructions, CancellationToken cancellationToken = default);
 
-    Task UpdateStepAsync(int stepId, string name, string instructions, bool requiresScan, CancellationToken cancellationToken = default);
+    Task UpdateStepAsync(int stepId, string name, string instructions, CancellationToken cancellationToken = default);
 
     /// <summary>Throws <see cref="WorkflowBuilderException"/> if the step has recorded StepCompletions.</summary>
     Task DeleteStepAsync(int stepId, CancellationToken cancellationToken = default);
 
     /// <summary>Reassigns OrderIndex 0..N-1 to match the given order. Must include every step in the stage exactly once.</summary>
     Task ReorderStepsAsync(int stageId, IReadOnlyList<int> orderedStepIds, CancellationToken cancellationToken = default);
+
+    /// <summary>Appends a new data-capture input to a step (manager-configured). Options is the checklist item list (ignored for other types).</summary>
+    Task<StepInput> AddStepInputAsync(int stepId, string label, StepInputType type, bool required, string? options, CancellationToken cancellationToken = default);
+
+    Task UpdateStepInputAsync(int inputId, string label, StepInputType type, bool required, string? options, CancellationToken cancellationToken = default);
+
+    /// <summary>Throws <see cref="WorkflowBuilderException"/> if operators have already recorded answers for the input.</summary>
+    Task DeleteStepInputAsync(int inputId, CancellationToken cancellationToken = default);
+
+    /// <summary>Reassigns OrderIndex 0..N-1 to match the given order. Must include every input on the step exactly once.</summary>
+    Task ReorderStepInputsAsync(int stepId, IReadOnlyList<int> orderedInputIds, CancellationToken cancellationToken = default);
 
     /// <summary>Saves the uploaded file under the configured media root and appends a MediaAsset row for it.</summary>
     Task<MediaAsset> AddMediaAssetAsync(int stepId, string fileName, Stream content, CancellationToken cancellationToken = default);

@@ -3,6 +3,7 @@ using System;
 using FlowLine.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FlowLine.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(FlowLineDbContext))]
-    partial class FlowLineDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260704115747_MoveScanToStage")]
+    partial class MoveScanToStage
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.28");
@@ -233,63 +236,6 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.ToTable("StepCompletions");
                 });
 
-            modelBuilder.Entity("FlowLine.Domain.Entities.StepCompletionValue", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("StepCompletionId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("StepInputId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StepCompletionId");
-
-                    b.HasIndex("StepInputId");
-
-                    b.ToTable("StepCompletionValues");
-                });
-
-            modelBuilder.Entity("FlowLine.Domain.Entities.StepInput", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Label")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Options")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("OrderIndex")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("Required")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("StepId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StepId");
-
-                    b.ToTable("StepInputs");
-                });
-
             modelBuilder.Entity("FlowLine.Domain.Entities.WorkItem", b =>
                 {
                     b.Property<int>("Id")
@@ -463,36 +409,6 @@ namespace FlowLine.Infrastructure.Data.Migrations
                     b.Navigation("WorkItem");
                 });
 
-            modelBuilder.Entity("FlowLine.Domain.Entities.StepCompletionValue", b =>
-                {
-                    b.HasOne("FlowLine.Domain.Entities.StepCompletion", "StepCompletion")
-                        .WithMany("Values")
-                        .HasForeignKey("StepCompletionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("FlowLine.Domain.Entities.StepInput", "StepInput")
-                        .WithMany("Values")
-                        .HasForeignKey("StepInputId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("StepCompletion");
-
-                    b.Navigation("StepInput");
-                });
-
-            modelBuilder.Entity("FlowLine.Domain.Entities.StepInput", b =>
-                {
-                    b.HasOne("FlowLine.Domain.Entities.Step", "Step")
-                        .WithMany("Inputs")
-                        .HasForeignKey("StepId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Step");
-                });
-
             modelBuilder.Entity("FlowLine.Domain.Entities.WorkItem", b =>
                 {
                     b.HasOne("FlowLine.Domain.Entities.Station", "ClaimedByStation")
@@ -550,19 +466,7 @@ namespace FlowLine.Infrastructure.Data.Migrations
                 {
                     b.Navigation("Completions");
 
-                    b.Navigation("Inputs");
-
                     b.Navigation("MediaAssets");
-                });
-
-            modelBuilder.Entity("FlowLine.Domain.Entities.StepCompletion", b =>
-                {
-                    b.Navigation("Values");
-                });
-
-            modelBuilder.Entity("FlowLine.Domain.Entities.StepInput", b =>
-                {
-                    b.Navigation("Values");
                 });
 
             modelBuilder.Entity("FlowLine.Domain.Entities.WorkItem", b =>

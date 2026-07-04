@@ -40,6 +40,7 @@
                     <th>Description</th>
                     <th>Stages</th>
                     <th>Status</th>
+                    <th>Runnable</th>
                     <th>Duplicate as</th>
                     <th></th>
                 </tr>
@@ -61,6 +62,19 @@
                         <td>@workflow.Description</td>
                         <td>@workflow.Stages.Count</td>
                         <td>@(workflow.IsActive ? "Active" : "Archived")</td>
+                        <td>
+                            @{
+                                var readiness = WorkflowReadiness.For(workflow);
+                            }
+                            @if (readiness.IsRunnable)
+                            {
+                                <span class="readiness-badge ready" title="Ready to run">✓ Ready</span>
+                            }
+                            else
+                            {
+                                <span class="readiness-badge not-ready" title="@string.Join("\n", readiness.Problems)">⚠ Not ready</span>
+                            }
+                        </td>
                         <AuthorizeView Policy="@FlowLinePolicies.CanManage" Context="edit">
                             <td>
                                 <input @bind="_duplicateNames[workflow.Id]" placeholder="@($"{workflow.Name} (Copy)")" />

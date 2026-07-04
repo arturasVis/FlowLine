@@ -14,6 +14,8 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
     public DbSet<Station> Stations => Set<Station>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<StepCompletion> StepCompletions => Set<StepCompletion>();
+    public DbSet<StepInput> StepInputs => Set<StepInput>();
+    public DbSet<StepCompletionValue> StepCompletionValues => Set<StepCompletionValue>();
     public DbSet<WorkflowAssignment> WorkflowAssignments => Set<WorkflowAssignment>();
 
     // Company-owned, pre-existing tables (SQL Server deployment only). Mapped read-only and
@@ -41,6 +43,14 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
             .HasMany(st => st.MediaAssets)
             .WithOne(m => m.Step)
             .HasForeignKey(m => m.StepId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Input *definitions* live with the step (a step with no completions can be deleted,
+        // taking its inputs with it). Enum stored as its int value.
+        modelBuilder.Entity<Step>()
+            .HasMany(st => st.Inputs)
+            .WithOne(i => i.Step)
+            .HasForeignKey(i => i.StepId)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Stage>()
@@ -86,6 +96,22 @@ public class FlowLineDbContext(DbContextOptions<FlowLineDbContext> options) : Db
             .WithMany(s => s.Completions)
             .HasForeignKey(sc => sc.StationId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // A captured value belongs to its completion (cascade with it, e.g. on send-back rework),
+        // and points at the input it answers. The input side is Restrict/NoAction — you can't
+        // delete an input definition that already has recorded answers (protects history), and it
+        // avoids a second cascade path into StepCompletionValues (which SQL Server rejects).
+        modelBuilder.Entity<StepCompletionValue>()
+            .HasOne(v => v.StepCompletion)
+            .WithMany(sc => sc.Values)
+            .HasForeignKey(v => v.StepCompletionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<StepCompletionValue>()
+            .HasOne(v => v.StepInput)
+            .WithMany(i => i.Values)
+            .HasForeignKey(v => v.StepInputId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // Supports the per-stage queue scan, the atomic claim's WHERE Status = Queued
         // AND ClaimedByStationId IS NULL guard, and ordering by oldest-queued (PRD §6.5).
